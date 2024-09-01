@@ -1,0 +1,101 @@
+<pre>
+  BIP: 84
+  레이어: 애플리케이션
+  제목: P2WPKH 기반 계좌를 위한 유도 체계
+  작성자: 파볼 루스낙(Pavol Rusnak) <stick@satoshilabs.com>
+  코멘트-요약: 아직 코멘트 없음.
+  코멘트-URI: https://github.com/bitcoin/bips/wiki/Comments:BIP-0084
+  상태: 최종
+  타입: 표준 트랙
+  생성일: 2017-12-28
+  라이선스: CC0-1.0
+</pre>
+* 원문: https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki
+* 싱크: https://github.com/bitcoin/bips/commit/5658236e6c9d9b39e99022674817925b18ea29d9
+
+==초록==
+
+본 BIP는 세그윗 트랜잭션에 대해 P2WPKH ([[bip-0173_kr.mediawiki|BIP 173(kr)]]) 직렬화 형식을 사용하는 HD 지갑의 유도 체계를 정의합니다.
+
+==동기==
+
+P2WPKH 트랜잭션을 사용하려면 공통 유도 체계가 필요합니다. 이를 통해 사용자는 동일한 마스터 시드 및/또는 단일 계좌로 다른 HD 지갑을 원활하게 사용할 수 있습니다.
+
+따라서 사용자는 전용 세그윗 계좌를 생성해야 합니다. 이 계좌는 본 BIP와 호환되는 지갑에서만 계좌를 감지하고 적절하게 처리할 수 있도록 보장합니다.
+
+===고려 사항===
+
+[[bip-0049_kr.mediawiki|BIP 49(kr)]] 의 고려 사항(Considerations) 섹션에 설명된 것과 동일한 근거를 사용합니다.
+
+==스펙==
+
+본 BIP는 [[bip-0032_kr.mediawiki|BIP 32(kr)]] 루트 계좌를 기반으로 여러 결정론적 주소를 도출하는 데 필요한 두 단계를 정의합니다.
+
+===공개키 유도===
+
+루트 계좌에서 공개키를 도출하기 위해 본 BIP는 [[bip-0044_kr.mediawiki|BIP 44(kr)]] 및 [[bip-0049_kr.mediawiki|BIP 49(kr)]]에 정의된 것과 동일한 계좌 구조를 사용하지만, 다른 트랜잭션 직렬화 방법을 나타내기 위해 오직 다른 목적(purpose) 값만을 사용합니다.
+
+<pre>
+m / purpose' / coin_type' / account' / change / address_index
+</pre>
+
+<code>purpose</code>-경로 레벨의 경우 <code>84'</code>를 사용합니다. 나머지 레벨은 BIP44 또는 BIP49에 정의된 대로 사용됩니다.
+
+
+===주소 유도===
+
+위에서 계산한 공개 키에서 P2WPKH 주소를 도출하기 위해 [[bip-0141_kr.mediawiki#p2wpkh|BIP 141(kr)]]에 정의된 캡슐화를 사용합니다:
+
+
+    witness:      <signature> <pubkey>
+    scriptSig:    (empty)
+    scriptPubKey: 0 <20-byte-key-hash>
+                  (0x0014{20-byte-key-hash})
+
+
+===확장키 버전===
+
+확장 키를 직렬화할 때 이 체계는 대체 버전 바이트를 사용합니다. 확장 공개키는 <code>0x04b24746</code>을 사용하여 "zpub" 접두사를 생성하고, 개인키는 <code>0x04b2430c</code>를 사용하여 "zprv" 접두사를 생성합니다. 테스트넷은 <code>0x045f1cf6</code> "vpub" 및 <code>0x045f18bc</code> "vprv"를 사용합니다.
+
+추가 등록된 버전 바이트는 [[https://github.com/satoshilabs/slips/blob/master/slip-0132.md|SLIP-0132]]에 나열되어 있습니다.
+
+
+==하위 호환성==
+
+이 BIP는 [#considerations]에 설명된 대로 설계상 이전 버전과 호환되지 않습니다. 호환되지 않는 지갑은 계좌를 전혀 검색하지 못하며 사용자는 문제가 있음을 알 수 있습니다.
+
+==테스트 벡터==
+
+<pre>
+  mnemonic = abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+  rootpriv = zprvAWgYBBk7JR8Gjrh4UJQ2uJdG1r3WNRRfURiABBE3RvMXYSrRJL62XuezvGdPvG6GFBZduosCc1YP5wixPox7zhZLfiUm8aunE96BBa4Kei5
+  rootpub  = zpub6jftahH18ngZxLmXaKw3GSZzZsszmt9WqedkyZdezFtWRFBZqsQH5hyUmb4pCEeZGmVfQuP5bedXTB8is6fTv19U1GQRyQUKQGUTzyHACMF
+
+  // Account 0, root = m/84'/0'/0'
+  xpriv = zprvAdG4iTXWBoARxkkzNpNh8r6Qag3irQB8PzEMkAFeTRXxHpbF9z4QgEvBRmfvqWvGp42t42nvgGpNgYSJA9iefm1yYNZKEm7z6qUWCroSQnE
+  xpub  = zpub6rFR7y4Q2AijBEqTUquhVz398htDFrtymD9xYYfG1m4wAcvPhXNfE3EfH1r1ADqtfSdVCToUG868RvUUkgDKf31mGDtKsAYz2oz2AGutZYs
+
+  // Account 0, first receiving address = m/84'/0'/0'/0/0
+  privkey = KyZpNDKnfs94vbrwhJneDi77V6jF64PWPF8x5cdJb8ifgg2DUc9d
+  pubkey  = 0330d54fd0dd420a6e5f8d3624f5f3482cae350f79d5f0753bf5beef9c2d91af3c
+  address = bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu
+
+  // Account 0, second receiving address = m/84'/0'/0'/0/1
+  privkey = Kxpf5b8p3qX56DKEe5NqWbNUP9MnqoRFzZwHRtsFqhzuvUJsYZCy
+  pubkey  = 03e775fd51f0dfb8cd865d9ff1cca2a158cf651fe997fdc9fee9c1d3b5e995ea77
+  address = bc1qnjg0jd8228aq7egyzacy8cys3knf9xvrerkf9g
+
+  // Account 0, first change address = m/84'/0'/0'/1/0
+  privkey = KxuoxufJL5csa1Wieb2kp29VNdn92Us8CoaUG3aGtPtcF3AzeXvF
+  pubkey  = 03025324888e429ab8e3dbaf1f7802648b9cd01e9b418485c5fa4c1b9b5700e1a6
+  address = bc1q8c6fshw2dlwun7ekn9qwf37cu2rn755upcp6el
+</pre>
+
+==참고 자료==
+
+* [[bip-0032_kr.mediawiki|BIP32(kr) - 계층적 결정론적 지갑]]
+* [[bip-0043_kr.mediawiki|BIP43(kr) - 결정론적 지갑을 위한 목적 필드]]
+* [[bip-0044_kr.mediawiki|BIP44(kr) - 결정론적 지갑을 위한 다중-계좌 계층]]
+* [[bip-0049_kr.mediawiki|BIP49(kr) - P2WPKH-nested-in-P2SH 기반 계좌를 위한 유도 체계]]
+* [[bip-0141_kr.mediawiki|BIP141(kr) - 세그윗 (컨센서스 레이어)]]
+* [[bip-0173_kr.mediawiki|BIP173(kr) - v0-16 네이티브 증인 출력에 대한 Base32 주소 형식]]

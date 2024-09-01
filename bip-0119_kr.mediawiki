@@ -1,0 +1,455 @@
+<pre>
+  BIP: 119
+  레이어: 컨센서스 (소프트 포크)
+  제목: CHECKTEMPLATEVERIFY
+  작성자: 제레미 루빈(Jeremy Rubin) <j@rubin.io>
+          제임스 오버른(James O'Beirne) <vaults@au92.org>
+  코멘트-URI: https://github.com/bitcoin/bips/wiki/Comments:BIP-0119
+  상태: 초안
+  타입: 표준 트랙
+  생성일: 2020-01-06
+  라이선스: BSD-3-Clause
+</pre>
+* 원문: https://github.com/bitcoin/bips/blob/master/bip-0119.mediawiki
+* 싱크: https://github.com/the-hong-gildong/bips/commit/1eefea0456d661b4c51f3a40b7262d6a99161edd#diff-aaa82c3decf53fb4312de88fbb3cc081da786b72387c9fec7bfb977ad3558b91
+
+==초록==
+
+본 BIP는 OP_NOP4를 새로운 오피코드 OP_CHECKTEMPLATEVERIFY로 변경하여 활성화할 것을 제안합니다.
+
+새로운 오피코드는 트랜잭션 혼잡 제어와 결제 채널 인스턴스화 등의 애플리케이션을 위한 것이고, 본 BIP의 동기 섹션에 설명되어 있습니다.
+
+==요약==
+
+OP_CHECKTEMPLATEVERIFY는 소프트 포크 업그레이드에 OP_NOP4 (0xb3) 을 사용합니다.
+
+OP_CHECKTEMPLATEVERIFY는 다음을 수행합니다:
+
+* 스택에 요소가 적어도 하나 이상 있어야 하고, 그렇지 않으면 실패합니다.
+* 스택에 있는 요소의 길이는 32 바이트이며, 그렇지 않으면 NOP입니다.
+* 현재 입력 인덱스에 해당하는 트랜잭션의 DefaultCheckTemplateVerifyHash는 스택의 요소와 같고, 그렇지 않으면 실패합니다.
+
+DefaultCheckTemplateVerifyHash는 직렬화된 버전, 락타임, 스크립트시그 해시 (만약 null 이 아닌 스크립트시그가 있다면), 입력의 수, 시퀀스 해시, 출력의 수, 출력 해시 그리고 현재 실행 중인 입력 인덱스에 커밋합니다.
+
+권장 표준 규칙이 추가적으로 있습니다:
+
+* 32 바이트가 아닌 요소는 SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS로 거부합니다.
+
+==동기==
+
+커버넌트는 키 소유권을 초월해 코인을 사용할 수 있는 방법에 대한 제한입니다. 이는 법률적 정의에 기반한 일반적인 정의로, CSV를 사용하는 간단한 스크립트도 만족시킬 수 있습니다. 비트코인 트랜잭션에서 커버넌트는 일반적으로 코인을 전송할 수 있는 대상에 대한 제한을 의미합니다. 커버넌트는 스마트 컨트랙트를 구축하는 데 유용할 수 있습니다. 커버넌트는 구현하기 너무 복잡하고 이에 묶인 코인의 대체 가능성을 떨어뜨릴 위험이 있기 때문에 역사적으로 비트코인에 적합하지 않은 것으로 널리 여겨져 왔습니다.
+
+본 BIP는 *템플릿*이라는 간단한 커버넌트를 도입하여 큰 위험 없이 매우 가치 있는 사용 사례의 제한된 집합을 가능하게 합니다. BIP-119 템플릿은 동적 상태가 없는 '''비-재귀적''' 완전-열거된 커버넌트를 가능하게 합니다. CTV는 사전 서명된 트랜잭션 오라클을 대체하며, 신뢰 및 상호 작용 요구 사항을 제거합니다. 사용 예로는 볼트(vaults), 비대화형 결제 채널 생성, 혼잡 제어된 배치, 효율적인 디스크리트 로그 계약(DLCs, discreet log contracts) 구성, 결제 풀 등 여러 가지가 있습니다. 이러한 애플리케이션에 대한 자세한 내용은 참고자료를 참조하세요.
+
+
+==상세 스펙==
+
+아래 코드는 파이썬 슈도코드로 작성된 CHECKTEMPLATEVERIFY 검증을 위한 주요 로직입니다. 비트코인 코어의 맥락에서 C++로 구현된 OP_CHECKTEMPLATEVERIFY의 의미론에 대한 표준 사양은 참조 구현에서 확인할 수 있습니다.
+
+오피코드의 실행은 다음과 같습니다:
+<source lang="python">
+def execute_bip_119(self):
+    # Before soft-fork activation / failed activation
+    # continue to treat as NOP4
+    if not self.flags.script_verify_default_check_template_verify_hash:
+        # Potentially set for node-local policy to discourage premature use
+        if self.flags.script_verify_discourage_upgradable_nops:
+            return self.errors_with(errors.script_err_discourage_upgradable_nops)
+        return self.return_as_nop()
+
+    # CTV always requires at least one stack argument
+    if len(self.stack) < 1:
+        return self.errors_with(errors.script_err_invalid_stack_operation)
+
+    # CTV only verifies the hash against a 32 byte argument
+    if len(self.stack[-1]) == 32:
+        # Ensure the precomputed data required for anti-DoS is available,
+        # or cache it on first use
+        if self.context.precomputed_ctv_data == None:
+            self.context.precomputed_ctv_data = self.context.tx.get_default_check_template_precomputed_data()
+
+        # If the hashes do not match, return error
+        if stack[-1] != self.context.tx.get_default_check_template_hash(self.context.nIn, self.context.precomputed_ctv_data):
+            return self.errors_with(errors.script_err_template_mismatch)
+
+        return self.return_as_nop()
+
+    # future upgrade can add semantics for this opcode with different length args
+    # so discourage use when applicable
+    if self.flags.script_verify_discourage_upgradable_nops:
+        return self.errors_with(errors.script_err_discourage_upgradable_nops)
+    else:
+        return self.return_as_nop()
+</source>
+
+이 해시의 계산은 아래에 명시된 대로 구현할 수 있습니다(여기서 self는 트랜잭션 유형입니다). 모든 유효성 검사 컨텍스트에서 서비스 거부 공격을 방지하기 위해 미리 계산된 데이터를 초기화해야 한다는 점에 주의하세요. 모든 구현은 이차 해싱 DoS를 방지하기 위해 해시 계산의 이러한 부분을 *반드시* 캐시해야만 합니다. 모든 가변 길이 계산은 스크립트시그, 시퀀스 및 출력의 해시를 포함하여 미리 계산해야 합니다. 아래의 "서비스 거부 및 유효성 검사 비용" 섹션을 참조하세요. 이것은 성능 최적화가 아닙니다.
+
+<source lang="python">
+
+def ser_compact_size(l):
+    r = b""
+    if l < 253:
+        # Serialize as unsigned char
+        r = struct.pack("B", l)
+    elif l < 0x10000:
+        # Serialize as unsigned char 253 followed by unsigned 2 byte integer (little endian)
+        r = struct.pack("<BH", 253, l)
+    elif l < 0x100000000:
+        # Serialize as unsigned char 254 followed by unsigned 4 byte integer (little endian)
+        r = struct.pack("<BI", 254, l)
+    else:
+        # Serialize as unsigned char 255 followed by unsigned 8 byte integer (little endian)
+        r = struct.pack("<BQ", 255, l)
+    return r
+
+def ser_string(s):
+    return ser_compact_size(len(s)) + s
+
+class CTxOut:
+    def serialize(self):
+        r = b""
+        # serialize as signed 8 byte integer (little endian)
+        r += struct.pack("<q", self.nValue)
+        r += ser_string(self.scriptPubKey)
+        return r
+
+def get_default_check_template_precomputed_data(self):
+    result = {}
+    # If there are no scriptSigs we do not need to precompute a hash
+    if any(inp.scriptSig for inp in self.vin):
+        result["scriptSigs"] = sha256(b"".join(ser_string(inp.scriptSig) for inp in self.vin))
+    # The same value is also pre-computed for and defined in BIP-341 and can be shared.
+    # each nSequence is packed as 4 byte unsigned integer (little endian)
+    result["sequences"] = sha256(b"".join(struct.pack("<I", inp.nSequence) for inp in self.vin))
+    # The same value is also pre-computed for and defined in BIP-341 and can be shared
+    # See class CTxOut above for details.
+    result["outputs"] = sha256(b"".join(out.serialize() for out in self.vout))
+    return result
+
+# parameter precomputed must be passed in for DoS resistance
+def get_default_check_template_hash(self, nIn, precomputed = None):
+    if precomputed == None:
+        precomputed = self.get_default_check_template_precomputed_data()
+    r = b""
+    # Serialize as 4 byte signed integer (little endian)
+    r += struct.pack("<i", self.nVersion)
+    # Serialize as 4 byte unsigned integer (little endian)
+    r += struct.pack("<I", self.nLockTime)
+    # we do not include the hash in the case where there is no
+    # scriptSigs
+    if "scriptSigs" in precomputed:
+        r += precomputed["scriptSigs"]
+    # Serialize as 4 byte unsigned integer (little endian)
+    r += struct.pack("<I", len(self.vin))
+    r += precomputed["sequences"]
+    # Serialize as 4 byte unsigned integer (little endian)
+    r += struct.pack("<I", len(self.vout))
+    r += precomputed["outputs"]
+    # Serialize as 4 byte unsigned integer (little endian)
+    r += struct.pack("<I", nIn)
+    return sha256(r)
+</source>
+
+
+PayToBareDefaultCheckTemplateVerifyHash 출력은 다음 템플릿과 일치합니다:
+
+<source lang="python">
+# Extra-fast test for pay-to-basic-standard-template CScripts:
+def is_pay_to_bare_default_check_template_verify_hash(self):
+    return len(self) == 34 and self[0] == 0x20 and self[-1] == OP_CHECKTEMPLATEVERIFY
+</source>
+
+
+==배포==
+
+배포는 스피디 트라이얼을 통해 배포된 BIP 9 VersionBits를 통해 수행될 수 있습니다. 비트코인 코어 참조 구현에는 현재 비트코인 코어에 구현된 활성화 메커니즘인 스피디 트라이얼과 호환되도록 구성된 아래 매개변수가 포함되어 있습니다. 더 많은 비트코인 커뮤니티에서 다른 방법을 선호하게 된다면, 그 방법을 대신 사용할 수도 있습니다.
+
+현재 구현의 시작 시간과 비트는 비트 5와 NEVER_ACTIVE/NO_TIMEOUT으로 설정되어 있지만, 이는 BIP가 초안인 동안 변경될 수 있습니다.
+
+불명확성을 피하기 위해 결정해야 할 매개변수는 다음과 같습니다:
+
+    // Deployment of CTV (BIP 119)
+    consensus.vDeployments[Consensus::DEPLOYMENT_CHECKTEMPLATEVERIFY].bit = 5;
+    consensus.vDeployments[Consensus::DEPLOYMENT_CHECKTEMPLATEVERIFY].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
+    consensus.vDeployments[Consensus::DEPLOYMENT_CHECKTEMPLATEVERIFY].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
+    consensus.vDeployments[Consensus::DEPLOYMENT_CHECKTEMPLATEVERIFY].min_activation_height = 0;
+
+BIP-119가 ACTIVE 상태에 도달하고 SCRIPT_VERIFY_DEFAULT_CHECK_TEMPLATE_VERIFY_HASH 플래그가 적용될 때까지 노드 구현은 정책에 의해 NOP4를 SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS로 실행해야 하며(권장됩니다), 합의를 위해 (블록 검증 중에는) NOP로 평가해야 합니다.
+
+CHECKTEMPLATEVERIFY를 쉽게 사용할 수 있도록 스크립트시그 데이터가 없는 PayToBareDefaultCheckTemplateVerifyHash의 일반적인 케이스를 표준으로 만들어 릴레이를 허용할 수 있습니다(권장합니다). 향후 템플릿 유형은 추후에 구현자의 선호와 정책이 변경됨에 따라 표준화될 수 있습니다.
+
+==참조 구현==
+
+참조 구현과 테스트는 비트코인 코어에 대한 PR https://github.com/bitcoin/bitcoin/pull/21702 에서 확인할 수 있습니다.
+
+PR은 리베이스되고 변경될 수 있으므로 링크하는 것이 이상적이지는 않지만 현재 구현 상태를 확인하고 다른 사람의 의견을 검토하기에 가장 좋은 곳입니다. 테스트 및 벡터를 포함한 해당 PR의 최근 커밋 해시는 여기에서 찾을 수 있습니다 https://github.com/jeremyrubin/bitcoin/commit/3109df5616796282786706738994a5b97b8a5a38. PR이 머지되면 이 BIP는 릴리즈된 특정 코드를 가리키도록 업데이트되어야 합니다.
+
+테스트 벡터는 참조 구현 및 BIP와의 호환성을 확인하기 위해 [/bip-0119/vectors the bip-0119/vectors
+directory] 디렉토리에서 확인할 수 있습니다.
+
+==근거==
+
+CHECKTEMPLATEVERIFY의 목표는 기존 코드베이스에 미치는 영향을 최소화하는 것입니다 -- 향후 더 복잡하지만 안전한 사용 사례를 알게 되면 새로운 템플릿 유형을 추가할 수 있습니다.
+
+아래에서 규칙에 대해 하나씩 살펴보겠습니다:
+
+====현재 입력 인덱스에 해당하는 트랜잭션의 DefaultCheckTemplateVerifyHash는 스택의 상단과 일치합니다====
+
+커밋 받을 데이터 집합은 인풋을 제외하고 트랜잭션의 TXID에 영향을 줄 수 있는 데이터의 상위 집합입니다. 이렇게 하면 주어진 인풋에 대해 TXID도 미리 알 수 있습니다. 그렇지 않으면, 채널이 Eltoo와 유사한 프로토콜을 사용하여 구축되지 않는 한 상환 TXID가 잘못 조정되고 사전 서명된 트랜잭션이 무효화될 수 있기 때문에 CHECKTEMPLATEVERIFY는 배치 처리된 채널 생성 구성에 사용할 수 없습니다. Eltoo와 유사한 구성을 사용할 수 있거나 사용할 수 없는 다른 유형의 사전 서명된 계약이 있을 수 있으므로 TXID를 예측 가능하게 하면 CTV가 임의의 하위 프로토콜과 더 쉽게 구성될 수 있습니다.
+
+=====버전 및 락타임에 커밋=====
+
+이러한 값이 커밋되지 않으면 TXID를 변경하는 것이 가능할 뿐만 아니라 출력을 사용하는 것을 임의로 지연시키는 것도 가능합니다. 
+
+이러한 값을 특정 값으로 제한하는 대신 커밋하는 것은 CHECKTEMPLATEVERIFY 사용자가 원하는 대로 버전과 잠금 시간을 설정할 수 있기 때문에 더 유연합니다.
+
+=====스크립트시그 해시에 커밋=====
+
+세그윗 트랜잭션의 스크립트시그는 완전히 비어있어야 합니다. P2SH 세그윗 트랜잭션인 경우 오직 리딤스크립트 여야만 합니다. 템플릿 해시는 해시 사이클인 리딤스크립트를 포함해야만 하는 스크립트시그에 커밋해야 하므로 P2SH는 (P2SH 해시가 깨지지 않는 한) CHECKTEMPLATEVERIFY와 호환되지 않습니다.
+
+세그윗 입력을 사용하지 않을 때의 가변성을 방지하기 위해 스크립트시그에도 커밋합니다. 이렇게 하면 레거시 출력에 대한 정확한 스크립트 시그가 커밋되어 있는 한 레거시 사전 서명 지출과 함께 2입력 CHECKTEMPLATEVERIFY를 사용할 수 있습니다. 이는 단순히 스크립트시그를 CHECKTEMPLATEVERIFY로 설정하는 것을 허용하지 않는 것보다 더 견고합니다.
+
+트랜잭션에 스크립트시그가 설정되어 있지 않으면 데이터를 해싱하거나 DefaultCheckTemplateVerifyHash에 포함시킬 목적이 없으므로 이를 생략합니다. (가변성을 피하기 위해) 스크립트시그가 비어 있어야 한다는 세그윗 규정 때문에 스크립트시그가 설정되지 않는 것이 일반적일 것으로 예상됩니다.
+
+스크립트 시그의 해시값은 SIGHASH_ALL 서명을 최적화하기 위해 이미 각 트랜잭션에 대해 미리 계산되었기 때문에 값에 직접 커밋하는 대신에 해시에 대해 커밋합니다.
+
+또한 해시에 커밋하면 스크립트로부터 DefaultCheckTemplateVerifyHash를 안전하고 모호하지 않으면서 더 간단하게 구성할 수 있습니다.
+
+=====입력의 수에 커밋=====
+
+트랜잭션에서 두 개 이상의 입력을 허용하면 두 개의 출력이 동일한 출력 세트에 지불을 요청할 수 있으므로 의도한 지불의 절반이 버려지는 "절반 지출" 문제가 발생할 수 있습니다.
+
+또한, 공동 사용 가능한 입력에 대한 제한은 안정적인 TXID가 요구되는 결제 채널 구조에서 매우 중요합니다(모든 입력 조합에 대해 업데이트가 서명되어야 함).
+
+그러나 여러 입력을 허용하는 합당한 사용 사례도 있습니다. 예를 들어:
+
+스크립트 경로: 
+
+    Path A: <+24 hours> OP_CHECKSEQUENCEVERIFY OP_CHECKTEMPLATEVERIFY <Pay Alice 1 Bitcoin (1 input) nLockTime for +24 hours>
+    Path B: OP_CHECKTEMPLATEVERIFY <Pay Bob 2 Bitcoin (2 inputs)>
+
+이 경우, 두 번째 출력을 추가하여 밥에게 2 BTC를 지불할 시간이 24시간 주어집니다. 24시간이 경과하면, 앨리스는 계약으로부터 자신의 1 BTC를 회수할 수 있습니다. 입력 UTXO 두 개 모두가 정확히 경로 B와 같을 수도 있고, 하나만 같을 수도 있습니다.
+
+이러한 구조의 문제는 입력을 정렬할 수 있는 N!가지 순서가 있으며 일반적으로 순서를 제한할 수 없다는 것입니다.
+
+CHECKTEMPLATEVERIFY를 사용하면 사용되는 입력의 정확한 수를 보장할 수 있습니다. 일반적으로 CHECKTEMPLATEVERIFY를 여러 입력과 함께 사용하는 것은 어렵고 미묘한 문제를 드러낼 수 있으므로, 특정한 응용 프로그램을 제외하고는 여러 입력을 사용하지 않는 것이 좋습니다.
+
+원칙적으로 시퀀스 해시(아래)에 커밋하면 암시적으로 입력 개수가 커밋되므로 이 필드는 엄밀히 말해 중복됩니다. 그러나 입력의 수에 별도로 커밋하면 스크립트에서 DefaultCheckTemplateVerifyHash를 더 쉽게 구성할 수 있습니다.
+
+비트코인의 합의 디코딩 로직은 벡터를 `MAX_SIZE=33554432`로 제한하며, 이는 `uint16_t`보다 크고 `uint32_t`보다 작기 때문에 입력의 수를 `uint32_t`로 취급합니다. 32비트는 현재 비트코인의 수학 연산 코드를 사용하여 조작하기에도 적합합니다. OP_CAT이 추가될 경우에도 그렇습니다. 블록의 최대 입력은 블록 크기에 따라 약 25,000개로 제한되며, 이는 `uint16_t`에 적합하지만 이는 불필요한 추상화 유출이라는 점에 유의하시기 바랍니다.
+
+=====시퀀스 해시에 커밋=====
+
+시퀀스에 커밋하지 않으면 TXID가 변조될 수 있습니다. 이를 통해 OP_CSV 없이도 상대 시퀀스 잠금을 적용할 수 있습니다. OP_CSV는 리터럴 값이 아닌 최소 nSequence 값을 적용하기 때문에 CHECKTEMPLATEVERIFY와 OP_CSV를 짝짓는 것만으로는 충분하지 않습니다.
+
+이 값은 SIGHASH_ALL 서명을 최적화하기 위해 이미 각 트랜잭션에 대해 미리 계산되었기 때문에 값에 직접 커밋하는 대신에 해시에 대해 커밋합니다.
+
+또한 해시에 커밋하면 스크립트에서 안전하고 모호하지 않게 DefaultCheckTemplateVerifyHash를 더 간단하게 구성할 수 있습니다.
+
+=====출력의 수에 커밋=====
+
+원칙적으로 출력 해시(아래)에 커밋하면 암시적으로 출력 개수가 커밋되므로 이 필드는 엄밀히 말해 중복됩니다. 그러나 출력의 수에 별도로 커밋하면 스크립트에서 DefaultCheckTemplateVerifyHash를 더 쉽게 구성할 수 있습니다.
+
+`COutpoint` 인덱스는 `uint32_t`이므로 출력의 수를 `uint32_t`로 취급합니다. 또한 비트코인의 합의 디코딩 로직은 벡터를 `MAX_SIZE=33554432`로 제한하며, 이는 `uint16_t`보다 크고 `uint32_t`보다 작습니다. 32비트는 현재 비트코인의 수학 연산 코드를 사용하여 조작하기에도 적합합니다. OP_CAT이 추가될 경우에도 그렇습니다.
+
+=====출력 해시에 커밋=====
+
+이것은 UTXO를 소비하는 것이 정확히 요청된 출력을 생성하는 것을 보장합니다.
+
+이 값은 SIGHASH_ALL 서명을 최적화하기 위해 이미 각 트랜잭션에 대해 미리 계산되었기 때문에 값에 직접 커밋하는 대신에 해시에 대해 커밋합니다.
+
+또한 해시에 커밋하면 스크립트에서 안전하고 모호하지 않게 DefaultCheckTemplateVerifyHash를 더 간단하게 구성할 수 있습니다.
+
+=====현재 입력 인덱스에 커밋=====
+
+현재 실행 중인 입력 인덱스에 커밋하는 것은 가변성 방지를 위해 반드시 필요한 것은 아니지만, 입력 순서를 제한하여 프로토콜 설계자에게 가변성의 원인을 제거해줍니다.
+
+하지만 인덱스에 커밋하면 키 재사용으로 인한 절반 지출 문제가 발생하지 않습니다. CHECKTEMPLATEVERIFY 스크립트는 특정 인덱스에서 사용되도록 커밋하므로, 이러한 스크립트의 재사용 인스턴스는 동일한 인덱스에서 사용될 수 없으며, 이는 동일한 트랜잭션에서 사용될 수 없음을 의미합니다. 따라서 더 안전하게 절반 지출 취약점 없이 지갑 볼트 컨트랙트를 설계하는 것이 가능해집니다.
+
+현재 인덱스에 커밋해도 여러 인덱스에서 사용할 수 있는 CHECKTEMPLATEVERIFY를 표현하는 데 방해가 되지 않습니다. 현재 스크립트에서는 각 인덱스(또는 향후 탭스크립트 브랜치)에 대해 CHECKTEMPLATEVERIFY 연산을 OP_IF로 래핑할 수 있습니다. OP_CAT 또는 OP_SHA256STREAM이 비트코인에 추가되면 해싱 전에 증인에 의해 인덱스가 간단히 전달될 수 있습니다.
+
+=====해시에 의해 값에 커밋=====
+
+해시에 의해 값에 커밋하면 스크립트에서 DefaultCheckTemplateVerifyHash를 더 쉽고 효율적으로 구성할 수 있습니다. 변결할 필요가 없는 필드는 다시 해시하면서 O(n) 오버헤드를 발생시키지 않고 해시로 커밋할 수 있습니다.
+
+또한, 향후 OP_SHA256STREAM이 추가되면 스크립트에서 해시 중간 상태에 커밋하여 O(n) 오버헤드 없이 단일 출력을 출력 목록에 추가할 수 있는 스크립트를 작성할 수 있습니다.
+
+=====SHA256 사용=====
+
+SHA256은 비트코인의 보안 표준을 충족하는 32바이트 해시이며, 템플릿 프로그램을 프로그래밍 방식으로 생성할 때 비트코인 스크립트 내에서 이미 사용할 수 있습니다.
+
+20바이트 해시인 RIPEMD160도 일부 상황에서 실행 가능한 해시가 될 수 있으며 몇 가지 이점이 있습니다. 수수료 효율성을 위해 RIPEMD160은 12바이트를 절약합니다. 하지만 제3자가 만든 프로그램이 트랜잭션 프리이미지에 대한 [https://bitcoin.stackexchange.com/questions/54841/birthday-attack-on-p2sh 생일 공격]을 받을 수 있는 위험을 초래할 수 있기 때문에 BIP-119에는 RIPEMD160이 선택되지 않았습니다.
+
+=====태그 없는 해시 사용=====
+
+탭루트/슈노르 BIP는 보안 [https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2018-June/016091.html 취약점]을 유발할 수 있는 방식으로 탭루트 리프, 브랜치, 조정 및 서명이 겹치는 것을 방지하기 위해 태그 해시(`SHA256(SHA256(tag)||SHA256(tag)||msg)`)를 사용합니다.
+
+OP_CHECKTEMPLATEVERIFY 는 외부에서 효과적으로 태그되기 때문에, 다시 말해 OP_CHECKTEMPLATEVERIFY 스스로에 의해 태그되어서 다른 해시와 혼동 될 수 없기 때문에, 이런 종류의 취약점과 관련이 없습니다.
+
+명백한 이점이 없고 비용이 들지 않는데도 이를 태그 해시로 만드는 것은 보수적인 설계 결정일 것입니다. 그러나 향후 OP_CAT이 비트코인에 도입될 경우, OP_CHECKTEMPLATEVERIFY 해시를 동적으로 구축하는 프로그램의 공간 효율성이 떨어질 수 있습니다. 따라서 BIP-119에서는 태그가 없는 베어 해시가 사용됩니다.
+
+=====필드의 순서=====
+
+엄밀히 말하면 필드의 순서는 중요하지 않습니다. 그러나 순서를 신중하게 선택하면 향후 스크립트(예: OP_CAT 또는 OP_SHA256STREAM을 사용하는 스크립트)의 효율성이 향상될 수 있습니다(향후 업그레이드 섹션에 설명된 대로).
+
+특히, 순서는 변경 가능성이 가장 적은 것 부터 가장 많은 것 순으로 선택됩니다.
+
+#nVersion
+#nLockTime
+#scriptSig hash (아마도!)
+#input count
+#sequences hash
+#output count
+#outputs hash
+#input index
+
+몇몇 필드는 자주 수정되지 않습니다. nVersion은 자주 변경되지 않아야 합니다. nLockTime은 일반적으로 0으로 고정해야 합니다(결제 트리의 경우 루트 수수료 스니핑을 방지하기 위해 *첫 번째* 잠금 시간만 필요합니다). scriptSig 해시는 일반적으로 전혀 설정되지 않아야 합니다.
+
+주어진 입력 개수에 대해 가능한 시퀀스 해시가 많기 때문에 입력 개수가 시퀀스 해시보다 먼저 옵니다.
+
+주어진 출력 개수에 대해 가능한 출력 해시가 많으므로 출력 개수가 출력 해시보다 앞에 오게 됩니다.
+
+일반적으로 하나의 입력을 여러 출력 디자인에 사용하기 때문에 입력 해시보다 출력 해시를 수정할 가능성이 더 높습니다.
+
+일반적으로 CHECKTEMPLATEVERIFY 스크립트에는 입력이 하나만 있으므로 입력 인덱스가 마지막 필드가 되는 것이 합리적이지 않습니다. 그러나 탈중앙화 킥스타터형 트랜잭션의 경우와 같이 "관심 없음" 인덱스를 쉽게 표현할 수 있어야 한다는 점을 고려해 이 값은 마지막에 배치했습니다.
+
+===설계 트레이드 오프와 리스크===
+커버넌트는 역사적으로 대체 가능성에 대한 잠재적 위험으로 인해 논란이 되어 왔습니다. 코인을 발행할 수 있는데, 그 코인은 영구적으로 어떻게 사용될 수 있는지 또는 사용되지 말아야 하는지에 대한 제약이나 메타데이터 전파가 필요한 경우가 있을 수 있습니다.
+
+CHECKTEMPLATEVERIFY 방식에서는 커버넌트가 단순한 템플릿으로 엄격하게 제한됩니다. CHECKTEMPLATEVERIFY 템플릿의 구조는 작성 시점에 출력을 정확히 알 수 있어야 합니다. 해체 인자를 기반으로 유한한 단계로 확장되는 템플릿만 만들 수 있습니다. 따라서 템플릿화된 트랜잭션은 이론적으로 모든 입력을 직접 생성하는 트랜잭션만큼 안전합니다.
+
+또한 템플릿은 알려진 입력 수만큼만 지출할 수 있도록 제한되어 있어 의도치 않게 '절반 지출' 문제가 발생하는 것을 방지합니다.
+
+템플릿은 제한적인 만큼 몇 가지 위험을 수반합니다.
+
+====서비스 거부와 유효성 검사 비용====
+
+CTV는 미리 계산된 해시를 확인하거나 고정 길이 인수의 해시(일부는 더 비싼 계산에서 캐시될 수 있음)를 계산하여 DoS를 유발하지 않고도 매우 저렴하게 유효성을 검사할 수 있도록 설계되었습니다.
+
+특히 CTV는 클라이언트가 모든 스크립트시그, 시퀀스 및 출력에 대한 해시 계산을 캐시하도록 요구합니다. CTV 이전에는 스크립트시그의 해시가 요구되지 않았습니다. 또한 CTV는 비어 있지 않은 모든 스크립트시그가 해시되기를 요구하지만, 이는 스크립트시그 해시의 일부로 처리할 수 있습니다.
+
+따라서 컨센서스 처리 중에 CTV 해시를 평가하는 것은 캐시를 사용할 수 있을 때 항상 O(1) 계산입니다. 일반적으로 CHECKSIG 동작에서도 유사한 문제가 있기 때문에 캐시를 사용할 수 있어야 합니다. 캐시 계산은 트랜잭션의 크기인 O(T)입니다.
+
+캐싱이 없을 때 DoS 문제가 발생할 수 있는 스크립트의 예는 다음과 같습니다:
+
+    <H> CTV CTV CTV... CTV
+
+이러한 스크립트는 인터프리터가 O(N*T) 데이터에 대해 해시를 계산(N개의 CTV를 가정)하게 만들 것입니다. 스크립트시그가 무효가 아닌 경우 캐시되지 않으면 O(T) 트랜잭션도 O(N)번 스캔될 수 있습니다(해싱보다 저렴하지만 여전히 DoS가 될 수 있습니다). 따라서 CTV는 트랜잭션의 모든 가변 길이 필드에 대한 해시와 연산을 캐시합니다.
+
+CTV의 경우 서비스 거부 노출 및 유효성 검사 비용이 비교적 명확합니다. 구현자는 CTV를 올바르게 코딩하여 기존 캐시를 활용하고 스크립트시그에 대한 (CTV의 경우 새로운) 계산을 캐시하도록 주의해야 합니다. 다른 유연한 커버넌트 제안은 보다 복잡한 계산이 캐시되기 어려울 수 있으며 이로 인해 이차 해싱 문제가 노출될 수 있습니다. 이는 유연성을 희생하는 대신 저렴하고 안전한 유효성 검사를 위해 CTV가 선택한 절충안입니다. 예를 들어, CTV가 해싱을 비트마스크로 선택적으로 허용하는 경우, 모든 출력의 조합을 캐시하는 것이 불가능하며 이로 인해 이차 해싱 DoS 취약점이 발생할 수 있습니다.
+
+
+====영구적으로 소비할 수 없는 출력====
+
+CHECKTEMPLATEVERIFY에 전달된 프리이미지 인자는 알려지지 않았거나 만족스럽지 않을 수 있습니다. 그러나 소비 가능한 주소라는 것에 대해 정보를 요구하는 것과 발신자가 어떤 주소로든 소비할 수 있는 능력은 양립할 수 없습니다(특히 OP_RETURN). 발신자가 템플릿을 보내기 전에 템플릿을 사용할 수 있는지 확인해야 하는 경우, CHECKTEMPLATEVERIFY 트리의 리프에서 트랜잭션이 아닌 것으로 입증된 챌린지 문자열의 서명을 요청할 수 있습니다.
+
+====전달하는 주소(Forwarding Addresses)====
+
+CHECKTEMPLATEVERIFY를 사용한 키 재사용은 "전달하는 주소 계약"의 한 형태로 사용될 수 있습니다. 전달하는 주소는 미리 정의된 방식으로 자동 실행될 수 있는 주소입니다. 예를 들어, 거래소의 핫 월렛은 상대적 타임아웃 이후에 자동으로 콜드 스토리지 주소로 이동될 수 있는 주소를 사용할 수 있습니다.
+
+문제는 이러한 방식으로 주소를 재사용하면 자금 손실로 이어질 수 있다는 것입니다. 예를 들어, 1 BTC를 콜드 스토리지로 전달하는 템플릿 주소를 만든다고 가정해 봅시다. 이 주소로 1 BTC보다 적은 금액을 보내면 해당 금액은 영구적으로 동결됩니다. 1 BTC보다 많은 금액을 보내면 초과된 금액은 큰 채굴 수수료로 지급될 것입니다. CHECKTEMPLATEVERIFY는 입력으로 제공된 비트코인의 정확한 양이나 지불된 수수료의 양에 커밋할 수 있지만, 이는 가변성 문제가 아니라 사용자 오류이기 때문에 그렇게 하지 않습니다. 미래의 소프트포크에서는 트랜잭션에서 사용할 수 있는 자금의 양을 검사하여 어떤 템플릿이나 스크립트 분기가 사용될 수 있는지를 조건부로 결정할 수 있는 연산자를 도입할 수 있습니다.
+
+일반적인 최선의 관행으로, 비트코인 사용자들은 시도중인 결제에 적합하다고 확신하지 않는 한, 주소를 재사용하지 않는 것이 필요합니다. 이러한 제한과 위험은 CHECKTEMPLATEVERIFY에만 국한된 것이 아닙니다. 예를 들어, 아토믹 스왑 스크립트는 해시가 공개되면 한 번만 사용할 수 있습니다. 미래의 탭루트 스크립트는 여러 논리적 분기를 포함할 수 있으며, 이러한 분기들은 여러 번 소비되는 것이 안전하지 않을 수 있습니다(예를들어, 해시 타임 락 분기는 사용할 때마다 고유한 해시로 인스턴스화해야 합니다). SIGHASH_ANYPREVOUT 트랜잭션에 서명한 키도 유사하게 재사용이 안전하지 않을 수 있습니다.
+
+CHECKTEMPLATEVERIFY는 현재 사용 중인 입력 인덱스에 커밋하기 때문에, 재사용된 키는 별도의 트랜잭션에서 실행되는 것이 보장되어 "절반 지출" 유형의 문제의 위험을 줄입니다.
+
+====NOP-Default 및 권장 표준 규칙====
+
+인수의 길이가 정확히 32가 아닌 경우, CHECKTEMPLATEVERIFY는 합의 검증 중에 이를 NOP로 처리합니다. 구현은 비-합의 전달 및 멤풀 유효성 검증 중에 이러한 상황에서 실패하는 것이 권장됩니다. 특히, 유효하지 않은 길이의 인수를 실패로 만들면 향후 소프트포크 업그레이드에서 더 엄격한 표준 제한에 의존하여 표준에 대한 제한을 안전하게 완화하는 동시에 업그레이드 규칙에 대한 합의를 위해 제한을 강화할 수 있습니다.
+
+표준성 규칙은 부도덕한 스크립트 개발자가 합의 중에 강제 적용되는 엄격한 표준성 규칙에 뜻하지 않게 의존하도록 만듭니다. 그 개발자가 표준에 유효하지 않지만 합의에 유효한 표준성 거절에 의존하여 트랜잭션을 네트워크에 바로 제출하면, 이는 자금 손실을 유발할 수 있습니다.
+
+====기능 중복====
+
+CHECKTEMPLATEVERIFY 템플릿은 다른 커버넌트 시스템보다 위험성이 상당히 낮습니다. 구현된다면, 다른 커버넌트 시스템은 CHECKTEMPLATEVERIFY의 기능을 불필요하게 만들 수 있습니다. 그러나 CHECKTEMPLATEVERIFY의 간단한 의미론과 낮은 체인 비용을 고려하면, 다른 기능과 중복되더라도 CHECKTEMPLATEVERIFY가 계속 선호될 것으로 예상됩니다.
+
+MES16에서 제안한 것과 같이 더 강력한 커버넌트는 수수료 조정과 같은 것들에 대한 능력 향상 면에서 몇 가지 이점을 가져올 수 있습니다. 그러나 이러한 기능들은 상당히 증가된 복잡성과 의도하지 않은 행동의 가능성을 야기할 수 있습니다.
+
+대안으로, SIGHASH_ANYPREVOUTANYSCRIPT를 기반으로 하는 커버넌트 디자인은 scriptPubKey를 통해 다음과 같은 방식으로 템플릿과 유사한 것을 구현할 수 있습니다:
+
+    <sig of desired TX with PK and fixed nonce R || SIGHASH_ANYPREVOUTANYSCRIPT <PK with public SK> OP_CHECKSIG
+
+SIGHASH_ANYPREVOUTANYSCRIPT는 추가적인 기술적 및 구현적 리스크를 가지고 있어서 비트코인에 포함될 수 있는 가능성을 배제할 수 있지만, 위의 기능들은 CHECKTEMPLATEVERIFY가 제공하는 것과 유사합니다. SIGHASH_ANYPREVOUTANYSCRIPT와 OP_CHECKTEMPLATEVERIFY 사이의 주요한 기능적 차이점은 OP_CHECKTEMPLATEVERIFY가 추가 입력의 수를 제한하고 동적으로 결정된 잔돈 출력을 배제하는 반면, SIGHASH_ANYPREVOUTANYSCRIPT는 SIGHASH_SINGLE 또는 SIGHASH_ANYONECANPAY와 결합될 수 있다는 것입니다. 추가 입력의 경우, OP_CHECKTEMPLATEVERIFY는 스크립트시그와 시퀀스에도 커밋하여 특정 P2SH 스크립트(또는 세그윗 v0 P2SH)를 지정할 수 있게 합니다. 이는 몇 가지 사용 사례에 유용할 수 있습니다. 또한, CHECKTEMPLATEVERIFY는 스크립트 크기 측면에서 이점을 가지고 있습니다(PK 선택에 따라 SIGHASH_ANYPREVOUTANYSCRIPT는 약 2배에서 3배의 바이트를 사용할 수 있음). 검증 속도 측면에서도 이점이 있습니다. OP_CHECKTEMPLATEVERIFY는 서명 연산 대신 해시 계산만 필요로 하기 때문에, 이는 대규모 결제 트리나 프로그램적 컴파일을 구성할 때 중요할 수 있습니다. CHECKTEMPLATEVERIFY는 미래의 템플릿 업그레이드를 위한 견고한 경로를 제공한다는 점에서 기능적으로도 이점이 있습니다.
+
+OP_CHECKSIGFROMSTACKVERIFY와 OP_CAT도 CHECKTEMPLATEVERIFY를 에뮬레이트하는 데 사용할 수 있습니다. 그러나 이러한 구성은 CHECKTEMPLATEVERIFY보다 사용하기 복잡하며, CHECKTEMPLATEVERIFY에는 없는 추가적인 검증 오버헤드를 초래합니다. 이러한 유형의 커버넌트는 또한 OP_COV와 유사한 잠재적 재귀 문제를 가지고 있어 비트코인에 포함될 가능성이 낮습니다.
+
+이 접근 방식의 구현 및 분석의 단순성과 사용자 애플리케이션이 실현할 수 있는 이점을 고려하여, 더 완전한 커버넌트 시스템 대신 CHECKTEMPLATEVERIFY의 템플릿 기반 접근 방식이 제안됩니다.
+
+
+====미래 업그레이드====
+
+이 섹션에서는 다른 가능한 업그레이드와의 시너지 뿐만 아니라 향후 가능한 OP_CHECKTEMPLATEVERIFY에 대한 업데이트에 대해 설명합니다.
+
+=====CHECKTEMPLATEVERIFY 버전=====
+
+OP_CHECKTEMPLATEVERIFY는 현재 32바이트 인수의 속성만 검증합니다. 미래에는 다른 길이의 인수에도 의미를 부여할 수 있습니다. 예를 들어, 33바이트 인수는 마지막 바이트를 제어 프로그램으로 사용할 수 있습니다. 이 경우, 플래그 바이트가 CTVHASH_ALL로 설정되면 DefaultCheckTemplateVerifyHash를 계산할 수 있습니다. SIGHASH_TYPE와 유사한 다른 프로그램도 추가될 수 있습니다. 예를 들어, CTVHASH_GROUP은 SIGHASH_GROUP 유형 제안과의 호환성을 위해 Taproot Annex에서 데이터를 읽고 번들링할 인덱스를 동적으로 변경할 수 있게 합니다.
+
+=====OP_CHECKSIGFROMSTACKVERIFY와의 Eltoo=====
+
+OP_CHECKTEMPLATEVERIFY와 OP_CHECKSIGFROMSTACKVERIFY 둘이 비트코인에 추가된다면, 다음 스크립트를 사용하여 Eltoo의 부유 트랜잭션 변형을 구현할 수 있습니다:
+
+    witness(S+n): <sig> <H(tx with nLockTime S+n paying to program(S+n))>
+    program(S): OP_CHECKTEMPLATEVERIFY <musig_key(pk_update_a, pk_update_b)> OP_CHECKSIGFROMSTACKVERIFY <S+1> OP_CHECKLOCKTIMEVERIFY
+
+
+SIGHASH_ANYPREVOUTANYSCRIPT와 비교할 때, OP_CHECKTEMPLATEVERIFY는 SIGHASH_ANYONECANPAY나 SIGHASH_SINGLE과 유사한 기능을 허용하지 않기 때문에, 프로토콜 구현자들은 수수료 지불을 위해 CPFP 앵커 출력 또는 입력을 사용하는 트랜잭션의 여러 버전을 서명하거나 트랜잭션 후원자와 같은 대안을 고려할 수 있습니다.
+
+=====OP_AMOUNTVERIFY=====
+
+트랜잭션에서 지출되고 있는 정확한 금액, 수수료로 지불되는 금액 또는 특정 출력에서 사용 가능한 금액을 확인하는 opcode가 OP_CHECKTEMPLATEVERIFY 주소를 보다 안전하게 만드는 데 사용될 수 있습니다. 예를 들어, OP_CHECKTEMPLATEVERIFY 프로그램 P가 정확히 S 사토시를 기대하는 경우, S-1 사토시를 보내면 동결된 UTXO가 되고 S+n 사토시를 보내면 n 사토시가 수수료로 지불됩니다. 범위 검사를 통해 프로그램을 기대값에만 적용하고 그렇지 않은 경우에는 기본적으로 키패스를 적용할 수 있습니다. 예를들어:
+
+    IF OP_AMOUNTVERIFY <N> OP_GREATER <PK> CHECKSIG ELSE <H> OP_CHECKTEMPLATEVERIFY
+
+=====OP_CAT/OP_SHA256STREAM=====
+
+비트코인이 문자열 조작 오피코드를 향상시킨다면 OP_CHECKTEMPLATEVERIFY로 (필드 순서 섹션에서 설명한 대로) 동적으로 커버넌트를 효율적으로 구축할 수 있습니다.
+
+다음 코드는 입력 인덱스 인수를 확인하고 템플릿에 연결하며 템플릿이 트랜잭션과 일치하는지 확인하는 예제입니다.
+
+    OP_SIZE 4 OP_EQUALVERIF
+    <nVersion || nLockTime || input count || sequences hash || output count || outputs hash>
+    OP_SWAP OP_CAT OP_SHA256 OP_CHECKTEMPLATEVERIFY
+
+== 하위 호환성 ==
+
+OP_CHECKTEMPLATEVERIFY는 더 엄격한 검증 의미론으로 OP_NOP4를 대체합니다. 따라서 이 변경으로 이전에 유효했던 스크립트는 더 이상 유효하지 않게 됩니다. OP_NOP에 대한 보다 엄격한 검증 의미론은 소프트 포크이므로, 기존 소프트웨어는 채굴 및 블록 유효성 검사를 제외하고는 업그레이드 없이 완전히 작동합니다. OP_CHECKSEQUENCEVERIFY와 OP_CHECKLOCKTIMEVERIFY에 대한 유사한 소프트 포크(BIP-0065 및 BIP-0112 참조)는 호환성 문제를 발생시키지 않고 OP_NOP 의미론을 변경했습니다.
+
+이전 포크와 달리, OP_CHECKTEMPLATEVERIFY의 참조 구현은 새 규칙이 활성화될 때까지 해당 스크립트를 사용하는 지출 스크립트를 가진 트랜잭션이 표준 정책에 따라 멤풀에 허용되거나 릴레이 되지 않습니다. 다른 구현체도 가능하면 이 규칙을 따르는 것이 좋지만, 필수는 아닙니다.
+
+이전 월렛 소프트웨어는 OP_CHECKTEMPLATEVERIFY 출력으로부터 지출을 수락할 수 있지만, "신뢰됨"으로 처리하기 위해서는 확인된 조상을 가진 PayToBareDefaultCheckTemplateVerifyHash 체인에 대한 업그레이드가 필요합니다(즉, 트랜잭션이 확인되기 전에 지출 가능).
+
+OP_CHECKTEMPLATEVERIFY의 백포트는 업그레이드할 수는 없지만 새로운 주요 버전으로 패치될 수는 있는 이전 노드 버전에 대해 간단히 준비할 수 있습니다(참조 구현 참조).
+
+== 참고자료 ==
+
+*[https://utxos.org utxos.org informational site]
+*[https://learn.sapio-lang.org Sapio Bitcoin smart contract language]
+*[https://rubin.io/advent21 27 Blog Posts on building smart contracts with Sapio and CTV, including examples described here.]
+*[https://www.youtube.com/watch?v=YxsjdIl0034&t=2451 Scaling Bitcoin Presentation]
+*[https://bitcoinops.org/en/newsletters/2019/05/29/ Optech Newsletter Covering OP_CHECKOUTPUTSHASHVERIFY]
+*[https://cyber.stanford.edu/sites/g/files/sbiybj9936/f/jeremyrubin.pdf Structuring Multi Transaction Contracts in Bitcoin]
+*[https://github.com/jeremyrubin/lazuli Lazuli Notes (ECDSA based N-of-N Signatures for Certified Post-Dated UTXOs)]
+*[https://fc16.ifca.ai/bitcoin/papers/MES16.pdf Bitcoin Covenants]
+*[https://bitcointalk.org/index.php?topic=278122.0 CoinCovenants using SCIP signatures, an amusingly bad idea.]
+*[https://fc17.ifca.ai/bitcoin/papers/bitcoin17-final28.pdf Enhancing Bitcoin Transactions with Covenants]
+*[https://github.com/jamesob/simple-ctv-vault Simple CTV Vaults]
+*[https://github.com/kanzure/python-vaults Python Vaults]
+*[https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-January/019808.html CTV Dramatically Improves DLCs]
+*[https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-April/020225.html Calculus of Covenants]
+*[https://rubin.io/bitcoin/2021/12/10/advent-13/ Payment Pools with CTV]
+*[https://rubin.io/bitcoin/2021/12/11/advent-14/ Channels with CTV]
+*[https://rubin.io/bitcoin/2021/12/09/advent-12/ Congestion Control with CTV]
+*[https://rubin.io/bitcoin/2021/12/07/advent-10/ Building Vaults on Bitcoin]
+
+
+===유사한 대안에 대한 참고===
+
+CHECKTEMPLATEVERIFY의 이전 버전인 CHECKOUTPUTSHASHVERIFY는 CHECKTEMPLATEVERIFY를 선호하여 철회되었습니다. CHECKOUTPUTSHASHVERIFY는 버전과 락타임에 커밋하지 않았기 때문에 보안상 취약했습니다.
+
+CHECKTEMPLATEVERIFY는 탭루트의 확장으로도 구현할 수 있었으며, 이전에 이 방식으로 제안되었습니다. 그러나 CHECKTEMPLATEVERIFY가 탭루트에 의존하지 않는다는 점을 고려하면 독립적으로 배포하는 것이 더 바람직합니다.
+
+CHECKTEMPLATEVERIFY는 이전에 OP_SECURETHEBAG로도 언급되었으며, 여기에서 이 BIP에 대한 토론을 검색하고 참조하는 데 도움이 될 수 있도록 언급되었습니다.
+
+==저작권==
+
+본 문서는 3-clause BSD 라이선스 하에 라이선스가 부여됩니다.

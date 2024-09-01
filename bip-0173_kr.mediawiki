@@ -1,0 +1,314 @@
+<pre>
+  BIP: 173
+  레이어: 애플리케이션
+  제목: v0-16 네이티브 증인 출력에 대한 Base32 주소 형식
+  작성자: 피터 윌러(Pieter Wuille) <pieter.wuille@gmail.com>
+          그레그 맥스웰(Greg Maxwell) <greg@xiph.org>
+  코멘트 요약: 아직 코멘트 없음.
+  코멘트-URI: https://github.com/bitcoin/bips/wiki/Comments:BIP-0173
+  상태: 최종
+  타입: 정보성
+  생성일: 2017-03-20
+  라이선스: BSD-2-Clause
+  다음을 대체: 142
+  다음으로 대체됨: 350
+</pre>
+*원문: https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
+* 싱크: https://github.com/bitcoin/bips/commit/7a104491862379e88662a39d1a2b613c907e503e
+
+==서론==
+
+===초록===
+
+이 문서는 체크섬이 포함된 base32 형식 "Bech32"와 이를 사용하여 네이티브 세그윗 출력 주소의 표준을 제안합니다.
+
+===저작권===
+
+이 BIP는 2-clause BSD 라이선스에 따라 라이선스가 부여됩니다.
+
+===동기===
+
+비트코인의 대부분의 역사에서, 비트코인은 끝이 잘려진 이중 SHA256 체크섬을 사용하는 base58 주소를 사용해 왔습니다. 이들은 원래 소프트웨어의 일부였으며 [https://github.com/bitcoin/bips/blob/master/bip-0013.mediawiki BIP13] 에서 Pay-to-script-hash ([https://github.com/bitcoin/bips/blob/master/bip-0016.mediawiki P2SH])를 위해 범위가 확장되었습니다.
+그러나 문자 집합과 체크섬 알고리즘 모두 제한이 있습니다.
+* Base58는 ''알파벳-숫자 모드(alphanumeric mode)''를 사용할 수 없기 때문에 QR 코드에서 많은 공간을 차지합니다.
+* Base58에서의 대소문자 혼합은 정확하게 적기, 모바일 키보드에서 입력하기, 혹은 소리 내어 읽기에 불편합니다.
+* 이중 SHA256 체크섬은 느리며 오류 검출 보장이 안 됩니다.
+* 오류 검출 코드에 대한 대부분의 연구는 (58이 아닌) [https://en.wikipedia.org/wiki/Prime_power 소수 거듭제곱(prime power)]인 문자 집합 크기에 적용되기 때문에, 이 경우에는 적용할 수 없습니다.
+* Base58 디코딩은 복잡하고 비교적 느립니다.
+
+세그윗 제안에는 새로운 클래스의 출력(증인 프로그램, [https://github.com/MyLifeForB/bips/blob/master/bip-0141_kr.mediawiki BIP141(kr)] 참조)과 그것의 두 인스턴스("P2WPKH"와 "P2WSH", [https://github.com/MyLifeForB/bips/blob/master/bip-0143_kr.mediawiki BIP143(kr)] 참조)가 포함됩니다. 이들의 기능은 P2SH 출력에 포함되어 구현이 가능하지만, 최적의 효율성과 보안을 위해서는 세그윗을 직접 사용하는 것이 좋습니다. 이 문서에서는 네이티브 증인 출력에 대한 새로운 주소 형식을 제안합니다(현재 및 미래 버전 모두).
+
+이는 [https://github.com/bitcoin/bips/blob/master/bip-0142.mediawiki BIP142]를 대체하며, 이전에 [https://bitcoincore.org/logs/2016-05-zurich-meeting-notes.html#base32 여기]에서 논의되었습니다([https://bitcoincore.org/en/meetings/2016/05/20/#error-correcting-codes-for-future-address-types 여기]에 요약되어있습니다).
+
+===예시===
+
+모든 예제는 공개키 <tt>0279BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798</tt>를 사용합니다. P2WSH 예제에서는 스크립트로 <tt>key OP_CHECKSIG</tt>를 사용합니다.
+
+* 메인넷 P2WPKH: <tt>bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4</tt>
+* 테스트넷 P2WPKH: <tt>tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx</tt>
+* 메인넷 P2WSH: <tt>bc1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3qccfmv3</tt>
+* 테스트넷 P2WSH: <tt>tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7</tt>
+
+==스펙==
+
+우선 일반적인 체크섬이 있는 base32<ref>'''도대체 왜 base32를 사용하는 것인가요?''' 대소문자를 혼용하지 않아서 읽기 쉽고 QR 코드에 넣기 쉬워진다는 점입니다. 길이가 15% 증가하지만, 복사, 붙여넣기할 때는 문제가 되지 않습니다.</ref> 포맷인 ''Bech32''를 설명한 후, 이를 사용하여 세그윗 주소를 정의합니다.
+
+===Bech32===
+
+Bech32<ref>'''왜 Bech32라고 부르나요?''' "는 BCH(사용된 오류 검출 알고리즘) 문자를 포함하며 "base"와 비슷한 소리가 나기 때문입니다.</ref> 문자열은 최대 90자 이하이며 다음과 같이 구성됩니다:
+* '''인간이-읽을-수-있는 파트(human-readable part)'''으로, 데이터의 유형이나 읽는 사람에게 관련이 있는 내용을 전달하기 위해 사용됩니다. 이 부분은 1~83개의 US-ASCII 문자로 이루어져 있으며, 각 문자는 [33-126] 범위의 값을 가지고 있어야 합니다. HRP 유효성은 특정 응용 프로그램에서 더 제한될 수 있습니다.
+* '''구분자(separator)'''는 항상 "1"입니다. 만약 "1"이 인간이-읽을-수-있는 파트 안에 허용된다면, 마지막에 있는 것이 구분자입니다.<ref>'''왜 주소에 구분자가 포함되나요?''' 이렇게 함으로써, 인간이-읽을-수-있는 파트와 데이터 파트가 명확하게 구분되어, 동일한 접두사를 공유하는 다른 인간이-읽을-수-있는 파트와 충돌할 가능성을 피할 수 있습니다. 인간이-읽을-수-있는 파트에 문자 집합 제한을 피할 수 있습니다. 구분 기호는 ''1''로 선택되었는데, 이는 비알파벳-숫자(non-alphanumeric)' 문자를 사용하면 주소 복사 붙여넣기 작업이 복잡해지기 때문입니다(일부 애플리케이션에서는 더블 클릭 선택이 불가능합니다). 따라서 일반 문자 집합 외의 알파벳-숫자 문자가 선택되었습니다.</ref>.
+* '''데이터 파트(data part)'''는 적어도 6자 이상이며, "1", "b", "i", "o"를 제외한 알파벳 대소문자와 숫자로만 구성됩니다.<ref>'''왜 [http://www.faqs.org/rfcs/rfc3548.html RFC3548] 또는 [https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt z-base-32]와 같은 기존 문자 집합을 사용하지 않는 것일까요?'''
+이 문자 집합은 [https://hissa.nist.gov/~black/GTLD/ 이런] 시각적 유사성 데이터에 따라 모호성을 최소화하기 위해 선택되었으며, 순서는 (동일한 데이터에 따라) 1 비트 이상 차이나는 유사한 문자 쌍의 수를 최소화하기 위해 선택되었습니다. 체크섬은 비트 오류의 수가 적을 때 검출 능력을 극대화하기 위해 선택되므로, 이 선택은 일부 오류 모델에서의 성능을 향상시킵니다.</ref>.
+
+
+{| class="wikitable"
+|-
+!
+!0
+!1
+!2
+!3
+!4
+!5
+!6
+!7
+|-
+!+0
+|q||p||z||r||y||9||x||8
+|-
+!+8
+|g||f||2||t||v||d||w||0
+|-
+!+16
+|s||3||j||n||5||4||k||h
+|-
+!+24
+|c||e||6||m||u||a||7||l
+|}
+
+
+'''체크섬'''
+
+데이터 파트의 마지막 6개 문자는 체크섬을 형성하며 어떠한 정보도 포함하지 않습니다. 유효한 문자열은 아래의 Python3 코드 스니펫에서 명시된 유효성 기준을 충족해야 합니다. <tt>bech32_verify_checksum</tt> 함수는 다음과 같은 인수를 받았을 때 참을 반환해야 합니다:
+* <tt>hrp</tt>: 문자열로 된 인간이-읽을-수-있는 파트
+* <tt>data</tt>: 위의 표를 사용하여 변환한 후 문자열을 나타내는 정수 목록으로 나타낸 데이터 파트
+
+<pre>
+def bech32_polymod(values):
+  GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+  chk = 1
+  for v in values:
+    b = (chk >> 25)
+    chk = (chk & 0x1ffffff) << 5 ^ v
+    for i in range(5):
+      chk ^= GEN[i] if ((b >> i) & 1) else 0
+  return chk
+
+def bech32_hrp_expand(s):
+  return [ord(x) >> 5 for x in s] + [0] + [ord(x) & 31 for x in s]
+
+def bech32_verify_checksum(hrp, data):
+  return bech32_polymod(bech32_hrp_expand(hrp) + data) == 1
+</pre>
+
+이 코드는 '''최대 4개 문자에 영향을 미치는 어떤 오류'''든 검출할 수 있는 [https://en.wikipedia.org/wiki/BCH_code BCH code]를 구현하며, 추가적인 오류를 검출하지 못할 확률이 10억 분의 1 미만입니다. 더 많은 세부 정보는 부록-Checksum Design에서 확인할 수 있습니다. 인간이-읽을-수-있는 파트는 각 문자의 US-ASCII 값을 상위 비트로 사용하여 체크섬 계산에 먼저 입력한 다음 0을 더한 다음 각 문자의 하위 비트를 입력하여 처리됩니다<ref>'''왜 인간이-읽을-수-있는 파트의 상위 비트를 먼저 처리하나요?'''
+이로 인해 실제로 체크섬이 계산되는 데이터는 ''[high hrp] 0 [low hrp] [data]'' 가 됩니다.
+이는 인간이-읽을-수-있는 파트의 오류가 알파벳 문자를 다른 문자로 변경하는 것과 같이 하위 5비트만 변경되는 것으로 가정하면, 오류는 최대 89자인 ''[low hrp] [data]'' 부분으로 제한되며, 따라서 모든 오류 검출 속성(부록 참조)이 적용됨을 의미합니다.</ref>.
+
+인간이-읽을-수-있는 파트와 (체크섬이 아닌) 데이터 파트의 값이 주어졌을 때 유효한 체크섬을 구성하려면 아래의 코드를 사용할 수 있습니다.
+
+<pre>
+def bech32_create_checksum(hrp, data):
+  values = bech32_hrp_expand(hrp) + data
+  polymod = bech32_polymod(values + [0,0,0,0,0,0]) ^ 1
+  return [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
+</pre>
+
+'''에러 정정'''
+
+BCH 코드의 특징 중 하나는 오류 정정에 사용할 수 있다는 것입니다. 오류 정정의 불행한 부작용 중 하나는 오류 검출 기능이 약화된다는 것입니다: 정정은 유효하지 않은(invalid) 입력을 유효한(valid) 입력으로 바꿀 수 있지만, 여러 개의 에러가 발생한 경우 유효한(valid) 입력이 정확한(correct) 입력이 아닐 수 있습니다. 잘못된(incorrect) 그러나 유효한 입력을 사용하면 자금이 복구할 수 없이 손실될 수 있습니다. 이러한 이유로, 구현체는 올바르지 않은 입력을 수정하는 기능을 구현하지 말아야 합니다(SHOULD NOT). 최대한 오류가 발생한 위치를 사용자에게 제시할 수는 있지만, 수정할 값을 제시해서는 안 됩니다.
+
+'''대문자/소문자'''
+
+체크섬을 계산할 때, 문자의 값을 결정하는 데 소문자 형식이 사용됩니다.
+
+인코더는 항상 모든 소문자 Bech32 문자열을 출력해야만 합니다(MUST). 만약 대문자 버전의 인코딩 결과가 필요한 경우(예: 표시 목적 또는 QR 코드 사용 등) 대문자 처리 절차를 인코딩 프로세스 외부에서 수행할 수 있습니다.
+
+디코더는 대문자와 소문자가 혼합된 문자열(이러한 문자열을 혼합 케이스 문자열이라고 함)을 수용해서는 안 됩니다(MUST NOT).
+
+표시용으로는 일반적으로 소문자가 선호되지만 QR 코드 내부에서는 대문자를 사용해야 합니다. 왜냐하면 QR 코드는 일반적으로 ''[http://www.thonky.com/qr-code-tutorial/alphanumeric-mode-encoding 알파벳-숫자 모드(alphanumeric mode)]''를 사용할 수 있어서, 대문자를 사용하면 ''[http://www.thonky.com/qr-code-tutorial/byte-mode-encoding 바이트 모드(byte mode)]''보다 45% 더 압축이 가능하기 때문입니다.
+
+===세그윗 주소 형식===
+
+세그윗 주소<ref>'''왜 모든 scriptPubKey에 대해 일반적인 주소 형식을 만드는 것은 불가능한가요?'''
+해당 방식은 기존 scriptPubKey 유형의 주소들과의 혼란을 야기할 수 있습니다. 또한, scriptPubKey와 일대일 매핑을 갖지 않는 주소 (예: ECDH 기반 주소)가 소개되는 경우, 완전히 일반적인 이전 주소 유형이 있는 경우 이전 주소 형식을 사용하여 생성된 scriptPubKey를 재해석할 수 있으며, 해당 주소로 비트코인이 전송되면 자금을 손실할 수 있습니다.</ref>는 다음의 Bech32 인코딩입니다.:
+
+* 인간이-읽을-수-있는 파트 "bc"<ref>'''왜 인간이-읽을-수-있는 파트로 'btc'가 아니라 'bc'를 사용하나요?''' 'bc' 가 더 짧기 때문입니다.</ref> 는 메인넷, "tb"<ref>'''왜 테스트넷의 인간이-읽을-수-있는 파트로 'tb' 를 사용하나요?''' 이것은 (구현체의 길이에 대한 가정을 단순화하기 위해) 메인넷 상의 대응하는 값과 동일한 길이를 선택했고 시각적으로도 구별할 수 있도록 선택되었습니다.</ref> 는 테스트넷입니다.
+* 데이터 파트 값:
+** 1개 문자 (데이터의 5 bit를 표현): 증인 버전
+** ([https://github.com/MyLifeForB/bips/blob/master/bip-0141_kr.mediawiki BIP141(kr)]에 정의된) 2-to-40-byte 증인 프로그램을 base32로 변환:
+*** 바이트당 가장 중요한 비트가 먼저 오도록, 증인 프로그램의 비트를 시작합니다.
+*** 그 비트를 5개씩 그룹화하고, 필요한 경우 끝에 0을 채워넣습니다.
+*** 위의 표를 사용하여 해당 비트를 문자로 변환합니다.
+
+'''디코딩'''
+
+segwit 주소를 해석하는 소프트웨어는:
+* 인간이-읽을-수-있는 파트가 메인넷인 경우 "bc", 테스트넷인 경우 "tb"인지 검증해야만 합니다(MUST).
+* 디코딩한 첫 번째 데이터 값인 증인 버전이 0과 16 사이인지 확인해야만 합니다(MUST).
+* 나머지 데이터를 바이트로 변환해야 합니다:
+** 값을 5비트로 번역하고, MSB부터 정렬합니다.
+** 이러한 비트를 8비트 그룹으로 재배열합니다. 끝 부분에 완전하지 않은 그룹이 있다면 4비트 이하이어야 하며 모두 0이어야 하며 제거됩니다(MUST).
+** 2개에서 40개의 그룹이 있어야 하며, 이들은 증인 프로그램의 바이트로 해석됩니다.
+
+디코더는 증인 프로그램의 알려진 길이 제한을 강제해야 합니다(SHOULD). 예를 들어 BIP141에서는 ''버전 바이트가 0이지만 증인 프로그램이 20바이트나 32바이트가 아닌 경우 스크립트를 실패해야합니다''라고 명시되어 있습니다.
+
+이전 규칙들의 결과로, 주소는 항상 14자에서 74자 사이의 길이를 가지며, 그 길이를 8로 나눈 나머지는 0, 3, 5가 될 수 없습니다. 버전 0의 위트니스 주소는 항상 42자 또는 62자이지만, 구현체는 어떤 버전도 사용할 수 있어야만 합니다(MUST).
+
+구현체는 주소를 scriptPubKey로 변환할 때 특별한 주의가 필요합니다. 여기서 증인 버전 ''n''은 ''OP_n''으로 저장됩니다. OP_0은 0x00으로 인코딩됩니다. 하지만 OP_1에서 OP_16까지는 0x51에서 0x60(10진수로 81에서 96)까지 인코딩됩니다.  만약 bech32 주소가 잘못된(incorrect) scriptPubKey로 변환된다면 그 결과는 소비할 수 없거나 보안에 취약할 가능성이 높습니다.
+
+===호환성===
+
+이러한 주소는 오직 새로운 소프트웨어에서만 사용 가능하며, 세그윗을 활성화한 새로운 소프트웨어를 가진 수신자에 한해 사용됩니다. 다른 모든 경우에는 P2SH나 P2PKH 주소를 사용해야 합니다.
+
+==근거==
+
+<references />
+
+==참조 구현==
+
+* 인코더와 디코더 참고:
+** [https://github.com/sipa/bech32/tree/master/ref/c For C]
+** [https://github.com/sipa/bech32/tree/master/ref/c++ For C++]
+** [https://github.com/sipa/bech32/tree/master/ref/javascript For JavaScript]
+** [https://github.com/sipa/bech32/tree/master/ref/go For Go]
+** [https://github.com/sipa/bech32/tree/master/ref/python For Python]
+** [https://github.com/sipa/bech32/tree/master/ref/haskell For Haskell]
+** [https://github.com/sipa/bech32/tree/master/ref/ruby For Ruby]
+** [https://github.com/sipa/bech32/tree/master/ref/rust For Rust]
+
+* 오류를 지역화하는 멋진(fancy) 디코더:
+** [https://github.com/sipa/bech32/tree/master/ecc/javascript For JavaScript] ([http://bitcoin.sipa.be/bech32/demo/demo.html demo website])
+
+==등록된 인간이-읽을-수-있는 접두사==
+
+사토시랩스(SatoshiLabs)는 다른 암호화폐들을 위해 등록된 인간이-읽을-수-있는 파트의 전체 목록을 유지 관리합니다.
+
+[https://github.com/satoshilabs/slips/blob/master/slip-0173.md SLIP-0173 : Registered human-readable parts for BIP-0173]
+
+==부록==
+
+===테스트 벡터===
+
+다음 문자열들은 유효한 Bech32입니다:
+* <tt>A12UEL5L</tt>
+* <tt>a12uel5l</tt>
+* <tt>an83characterlonghumanreadablepartthatcontainsthenumber1andtheexcludedcharactersbio1tt5tgs</tt>
+* <tt>abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw</tt>
+* <tt>11qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqc8247j</tt>
+* <tt>split1checkupstagehandshakeupstreamerranterredcaperred2y9e3w</tt>
+* <tt>?1ezyfcl</tt> WARNING: During conversion to US-ASCII some encoders may set unmappable characters to a valid US-ASCII character, such as '?'. For example:
+
+<pre>
+>>> bech32_encode('\x80'.encode('ascii', 'replace').decode('ascii'), [])
+'?1ezyfcl'
+</pre>
+
+다음 문자열들은 유효하지 않은 Bech32입니다 (유효하지 않은 근거와 함께):
+* 0x20 + <tt>1nwldj5</tt>: 범위를 벗어난 HRP 문자
+* 0x7F + <tt>1axkwrx</tt>: 범위를 벗어난 HRP 문자
+* 0x80 + <tt>1eym55h</tt>: 범위를 벗어난 HRP 문자
+* <tt>an84characterslonghumanreadablepartthatcontainsthenumber1andtheexcludedcharactersbio1569pvx</tt>: overall max length exceeded
+* <tt>pzry9x0s0muk</tt>: No separator character
+* <tt>1pzry9x0s0muk</tt>: Empty HRP
+* <tt>x1b4n0q5v</tt>: Invalid data character
+* <tt>li1dgmt3</tt>: Too short checksum
+* <tt>de1lg7wt</tt> + 0xFF: Invalid character in checksum
+* <tt>A1G7SGD8</tt>: checksum calculated with uppercase form of HRP
+* <tt>10a06t8</tt>: empty HRP
+* <tt>1qzzfhee</tt>: empty HRP
+
+다음 목록은 유효한 세그윗 주소와 해당하는 ScriptPubKey를 16진수입니다.
+* <tt>BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4</tt>: <tt>0014751e76e8199196d454941c45d1b3a323f1433bd6</tt>
+* <tt>tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sl5k7</tt>: <tt>00201863143c14c5166804bd19203356da136c985678cd4d27a1b8c6329604903262</tt>
+* <tt>bc1pw508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7k7grplx</tt>: <tt>5128751e76e8199196d454941c45d1b3a323f1433bd6751e76e8199196d454941c45d1b3a323f1433bd6</tt>
+* <tt>BC1SW50QA3JX3S</tt>: <tt>6002751e</tt>
+* <tt>bc1zw508d6qejxtdg4y5r3zarvaryvg6kdaj</tt>: <tt>5210751e76e8199196d454941c45d1b3a323</tt>
+* <tt>tb1qqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesrxh6hy</tt>: <tt>0020000000c4a5cad46221b2a187905e5266362b99d5e91c6ce24d165dab93e86433</tt>
+
+다음 목록은 유효하지 않은 세그윗 주소와 유효하지 않은 이유입니다.
+* <tt>tc1qw508d6qejxtdg4y5r3zarvary0c5xw7kg3g4ty</tt>: Invalid human-readable part
+* <tt>bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5</tt>: Invalid checksum
+* <tt>BC13W508D6QEJXTDG4Y5R3ZARVARY0C5XW7KN40WF2</tt>: Invalid witness version
+* <tt>bc1rw5uspcuh</tt>: Invalid program length
+* <tt>bc10w508d6qejxtdg4y5r3zarvary0c5xw7kw508d6qejxtdg4y5r3zarvary0c5xw7kw5rljs90</tt>: Invalid program length
+* <tt>BC1QR508D6QEJXTDG4Y5R3ZARVARYV98GJ9P</tt>: Invalid program length for witness version 0 (per BIP141)
+* <tt>tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sL5k7</tt>: Mixed case
+* <tt>bc1zw508d6qejxtdg4y5r3zarvaryvqyzf3du</tt>: zero padding of more than 4 bits
+* <tt>tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3pjxtptv</tt>: Non-zero padding in 8-to-5 conversion
+* <tt>bc1gmk9yu</tt>: Empty data section
+
+===체크섬 설계===
+
+'''설계 선택'''
+
+BCH 코드는 모든 소수-거듭제곱 문자 알파벳에서 구성할 수 있으며, 크기와 오류 검출 능력 간에 좋은 트레이드 오프를 갖도록 선택할 수 있습니다. 대부분의 BCH 코드 작업은 이진 알파벳을 사용하지만, 이는 필수 요건은 아닙니다. 이는 [https://en.wikipedia.org/wiki/Cyclic_redundancy_check CRC 코드]보다 우리의 사용 사례에 더 적합합니다. [https://en.wikipedia.org/wiki/Reed%E2%80%93Solomon_error_correction Reed-Solomon 코드]와 달리, 길이가 알파벳 크기에서 하나 더 적어지도록 제한되지 않습니다. 또한 효율적인 오류 정정을 지원하지만, 오류 검출만 구현하는 것은 매우 간단합니다.
+
+주소 길이와 오류 검출 능력 간의 균형을 위해 우리는 6개의 체크섬 문자를 선택합니다. 이는 1분의 10억 이하의 랜덤 실패 확률을 위한 충분한 가장 낮은 수입니다. 우리가 보호하려는 데이터의 길이(잠재적인 40바이트 증인 프로그램의 경우 최대 71바이트)를 위해 BCH 코드를 구성할 수 있으며, 이는 최대 4개의 오류 검출을 보장합니다.
+
+'''선택된 속성'''
+
+모든 코드가 그렇지는 않지만 여러 코드들 중 일부는 설계한 목표 이상으로 오류를 검출하려 할 때 성능이 나빠집니다. 이러한 이유로, 3개의 오류만을 검출하도록 설계된 코드와 4개의 오류를 검출하도록 설계된 코드를 고려하고, 실제로 얼마나 잘 수행되는지 분석합니다.
+
+여기서 선택한 구체적인 코드는 다음의 결과로부터 선정되었습니다.:
+* 최대 길이 93, 151, 165, 341, 1023 및 1057까지 3 개 또는 4 개의 오류를 검출하기 위해 설계된 159605 개의 철저한 BCH 코드 목록으로 시작합니다.
+* 이 중, 길이 71까지 4 개의 오류를 검출하는 것을 요구하면, 28825 개의 코드가 남습니다.
+* 이 중, 워스트 케이스에서 가장 좋은 성능을 보이는 5 개의 오류를 검출하는 윈도우 를 선택하면, 310개의 코드가 남습니다.
+* 이 중에서도 작은 ''bit'' 오류를 검출하지 못할 확률이 가장 낮은 코드를 선택합니다.
+
+순진한 검색(naive search)은 6.5 * 10<sup>19</sup> 개 이상의 체크섬 평가를 필요로 하기 때문에, 분석에는 충돌 검색(collision-search)이 사용되었습니다. 이 코드는 [https://github.com/sipa/ezbase32/ 여기]에서 찾을 수 있습니다.
+
+'''속성'''
+
+다음 표는 검출 실패 확률을 요약한 것입니다 (10<sup>9</sup> 분의 1의 배수로).
+
+{| class="wikitable"
+|-
+!colspan="2" | Window length
+!colspan="6" | Number of wrong characters
+|-
+!Length
+!Description
+!≤4
+!5
+!6
+!7
+!8
+!≥9
+|-
+| 8 || 최대 6개 에러 검출 || colspan="3" | 0 || 1.127 || 0.909 || n/a
+|-
+| 18 || 최대 5개 에러 검출 || colspan="2" | 0 || 0.965 || 0.929 || 0.932 || 0.931
+|-
+| 19 || 워스트 케이스에서 6개 에러 || 0 || 0.093 || 0.972 || 0.928 || colspan="2" | 0.931
+|-
+| 39 ||  P2WPKH 주소 길이 || 0 || 0.756 || 0.935 || 0.932 || colspan="2" | 0.931
+|-
+| 59 || P2WSH 주소 길이 || 0 || 0.805 || 0.933 || colspan="3" | 0.931
+|-
+| 71 || 40 바이트 프로그램 주소 길이 || 0 || 0.830 || 0.934 || colspan="3" | 0.931
+|-
+| 89 || 최대 4개 에러 검출 || 0 || 0.867 || 0.933 || colspan="3" | 0.931
+|}
+이것은 P2WPKH 주소의 39개 문자 중에서 무작위로 분포하는 5개의 변경 문자가 발생할 때, 검출되지 않을 확률이''10억 당 0.75''인 것을 의미합니다. 이러한 5개의 변경 사항이 19자리 윈도우 내에서 무작위로 발생하면, 이 확률은 ''10억 당 0.093''로 줄어듭니다. 오류의 수가 증가함에 따라 확률은 ''2<sup>30</sup> 중 1'' = ''10억 당 0.931''로 수렴합니다.
+
+선택된 코드는 1023자 이하의 길이에 대해서는 괜찮은 성능을 보이지만, 89자(구분자 제외) 이상의 길이에 대해서는 다른 디자인이 더 좋습니다.
+
+==감사의 글==
+
+이 문서는 Rusty Russell의 [https://rusty.ozlabs.org/?p=578 주소 제안], Mark Friedenbach의 [https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2014-February/004402.html base32] 제안에서 영감을 받았으며, Luke Dashjr, Johnson Lau, Eric Lombrozo, Peter Todd 및 다양한 리뷰어들의 의견을 반영하였습니다.
+
+==공시 (2024에 추가됨)==
+
+bech32의 설계상의 실수로 인해 이 체크섬 체계는 [[https://gist.github.com/sipa/a9845b37c1b298a7301c33a04090b2eb|5개 미만의 연속된 문자의 삽입 및 삭제]]에 대해 항상 강력하지는 않습니다. 이러한 약점 때문에 [[bip-0350.mediawiki|BIP-350]]은 이 BIP에 설명된 체계를 네이티브 세그윗 v0 출력에 대해서만 사용할 것을 제안합니다.

@@ -1,0 +1,331 @@
+<pre>
+  BIP: 112
+  레이어: 컨센서스 (소프트 포크)
+  제목: CHECKSEQUENCEVERIFY
+  작성자: Btc드락(BtcDrak) <btcdrak@gmail.com>
+          마크 프라이든배치(Mark Friedenbach) <mark@friedenbach.org>
+          에릭 롬브로조(Eric Lombrozo) <elombrozo@gmail.com>
+  코멘트-요약: 아직 코멘트 없음.
+  코멘트-URI: https://github.com/bitcoin/bips/wiki/Comments:BIP-0112
+  상태: 최종
+  타입: 표준 트랙
+  생성일: 2015-08-10
+  라이선스: PD
+</pre>
+* 원문: https://github.com/bitcoin/bips/blob/master/bip-0112.mediawiki
+* 싱크: https://github.com/bitcoin/bips/commit/b151555daa23343ed550fbc0f191b730814a9e69
+
+==초록==
+
+본 BIP는 비트코인 스크립팅 시스템을 위한 새로운 오피코드(CHECKSEQUENCEVERIFY)를 설명하며, BIP 68과 함께 사용 중인 출력의 나이에 따라 스크립트의 실행 경로를 제한할 수 있도록 합니다.
+
+==요약==
+
+CHECKSEQUENCEVERIFY는 기존 NOP3 연산 코드를 재정의합니다.
+실행 시 다음 조건 중 하나라도 참이면 스크립트 인터프리터가 오류와 함께 종료됩니다:
+
+* 스택이 비어 있거나
+* 스택의 최상위 항목이 0보다 작거나, 또는
+* 스택의 최상위 항목에 비활성화 플래그(1 << 31)가 설정되지 않은 경우, 그리고
+** 트랜잭션 버전이 2 미만인 경우, 또는
+** 트랜잭션 입력 시퀀스 넘버 비활성화 플래그(1 << 31)가 설정된 경우, 또는
+** 상대 잠금 시간 유형이 동일하지 않은 경우, 또는
+** 최상위 스택 항목이 트랜잭션 입력 시퀀스보다 큰 경우(BIP68에 따라 마스킹 했을 때);
+
+그렇지 않으면 NOP가 실행된 것처럼 스크립트 실행이 계속됩니다.
+
+BIP 68은 해당 입력이 블록 높이 또는 블록 시간으로 계산되는 지정 나이에 도달할 때까지 논-파이널 트랜잭션이 블록에 포함되기 위해 선택되지 않도록 합니다. CHECKSEQUENCEVERIFY에 대한 인수를 nSequence 필드와 비교하여 원하는 출력의 최소 사용 나이를 간접적으로 확인합니다. 해당 상대 나이에 도달할 때까지 CHECKSEQUENCEVERIFY를 포함한 모든 스크립트 실행 경로는 유효성 검사에 실패하여 트랜잭션이 블록에 포함되기 위해 선택되지 않게 됩니다.
+
+
+==동기==
+
+BIP 68은 시퀀스 넘버에 상대적 잠금 시간이라는 합의가 강제되는 새로운 시맨틱을 부여하여 트랜잭션 nSequence 필드 의미를 재설정합니다. 그러나 이 필드를 기반으로 의사 결정을 내릴 수 있는 비트코인 스크립트를 구축할 방법은 없습니다.
+
+스크립트에서 nSequence 필드에 액세스할 수 있도록 하면, 게시 증명 후 어떤 최소한의 시간 동안만 액세스할 수 있는 코드 경로를 구성할 수 있게 됩니다. 이를 통해 에스크로, 결제 채널 또는 양방향 페그와 같은 단계적 프로토콜에서 다양한 애플리케이션을 사용할 수 있습니다.
+
+
+===만료 기한이 있는 계약===
+
+====타임아웃이 있는 에스크로====
+
+펀딩 후 30일이 지나면 자동으로 만료되는 에스크로를 다음과 같은 방법으로 설정할 수 있습니다. 앨리스, 밥, 에스크로가 다음 사용(redeem) 스크립트로 2-of-3 주소를 생성합니다.
+
+    IF
+        2 <Alice's pubkey> <Bob's pubkey> <Escrow's pubkey> 3 CHECKMULTISIG
+    ELSE
+        "30d" CHECKSEQUENCEVERIFY DROP
+        <Alice's pubkey> CHECKSIG
+    ENDIF
+
+언제든지 앨리스, 밥 또는 에스크로 중 둘로부터의 서명을 사용하여 자금을 사용할 수 있습니다.
+
+30일이 지나면 앨리스 혼자 서명할 수 있습니다.
+
+에스크로 주소로 결제가 컨펌 될 때까지 시간이 가지 않습니다.
+
+===소급 무효화===
+
+많은 경우, 향후 어떤 사건이 발생할 경우 취소할 수 있는 계약을 만들고자 합니다. 그러나 블록체인의 불변성을 고려할 때, 이미 확정된 이전 약속을 소급해서 무효화하는 것은 사실상 불가능합니다. 소급 무효화를 할 수 있는 유일한 메커니즘은 블록체인을 재구성하는 것인데, 이는 근본적인 보안상의 이유로 매우 어렵고 비용이 많이 들도록 설계되어 있습니다.
+
+이러한 제한에도 불구하고, CHECKSEQUENCEVERIFY를 사용하여 과거 커밋의 비가역성을 유지하면서 소급 무효화와 기능적으로 유사한 것을 제공할 수 있는 방법이 있습니다. 지연된 실행이 하나 이상 포함되는 여러개의 브랜치를 가진 스크립트를 구성하여 누군가 출력을 사용하는 것을 무효화 할 조건을 제공할 수 있는 시간을 제공할 수 있습니다. 지연된 브랜치를 효과적으로 무효화하여 다른 거래 당사자가 트랜잭션을 처음부터 브로드캐스트하지 못하도록 막을 수 있습니다. 제한 시간 내에 무효화 조건이 발생하지 않으면 지연된 브랜치를 사용할 수 있게 되어 원래의 계약이 지켜집니다.
+
+이 아이디어를 좀 더 구체적으로 적용하면 다음과 같습니다:
+
+====해시 타임락 계약====
+
+해시 타임락 계약(HTLCs, Hash Time-Locked Contracts)은 오프체인 계약 협상을 위한 일반적인 메커니즘을 제공합니다. 무효화 시간 제한 내에 제시할 수 있는 비밀(해시의 프리이미지)에 대한 지식이 필요하도록 실행 경로를 만들 수 있습니다. 비밀을 공유하면 거래 상대방이 시간 제한이 지나갈 때까지 기다리는 동안 다른 거래 상대방이 즉시 결과물을 청구할 수 있기 때문에 트랜잭션이 절대 브로드캐스트되지 않도록 보장할 수 있습니다. 비밀을 공유하지 않으면 상대방은 즉각적으로 지불되는 경로를 사용할 수 없으며 대신 지연 경로를 사용해야 합니다.
+
+====양방향 결제 채널====
+
+스크립트화 가능한 상대적 잠금 시간은 상대방이 취소된 트랜잭션을 브로드캐스트할 경우 반응할 수 있도록 예측가능한 시간을 제공합니다: 절대 잠금 시간은 시간 제한에 가까워지면 채널을 닫았다가 다시 열어야 하는 반면, 상대 잠금 시간은 트랜잭션이 블록에 컨펌되는 순간부터 시계가 돌아가기 시작합니다. 또한 비협조적인 상대방이 있을 경우 채널에서 자금을 인출하기까지 얼마나 기다려야 하는지(블록 수)를 정확히 알 수 있는 수단도 제공합니다.
+
+====라이트닝 네트워크====
+
+라이트닝 네트워크는 양방향 결제 채널 아이디어를 확장하여 여러 양방향 결제 채널 홉을 통해 결제를 라우팅할 수 있도록 합니다.
+
+이 채널은 앨리스와 밥의 2-of-2 다중 서명이 필요한 앵커 트랜잭션과 앵커 트랜잭션을 소비하는 일련의 취소 가능한 약정 트랜잭션을 기반으로 합니다. 약정 트랜잭션은 앵커 트랜잭션의 자금을 앨리스와 밥에게 분배하며, 어느 쪽이든 언제든지 최신 약정 트랜잭션을 발행하여 채널을 마무리할 수 있습니다.
+
+이상적으로는 취소된 약정 트랜잭션이 성공적으로 사용할 수 없고, 최신 약정 트랜잭션은 매우 빠르게 사용할 수 있어야 합니다.
+
+약정 트랜잭션을 효과적으로 취소할 수 있도록 앨리스와 밥은 서로 약간 다른 최신 약정 트랜잭션 버전을 가지고 있습니다. 앨리스의 버전에는 앨리스에게 지급하는 약정 트랜잭션의 모든 출력에 강제 지연이 포함되며, 밥이 트랜잭션의 취소 코드를 알고 있는 경우 해당 출력을 사용할 수 있는 대체 브랜치도 포함됩니다. 밥의 버전에서는 밥에 대한 지불도 비슷하게 방해받습니다. 앨리스와 밥이 새로운 잔액과 새로운 약정 트랜잭션을 협상할 때, 이전 취소 코드도 공개하므로 이전 트랜잭션을 릴레이 하지 않기로 약정합니다.
+
+앨리스에게 지불하는 간단한 출력은 다음과 같습니다:
+
+    HASH160 <revokehash> EQUAL
+    IF
+        <Bob's pubkey>
+    ELSE
+        "24h" CHECKSEQUENCEVERIFY DROP
+        <Alice's pubkey>
+    ENDIF
+    CHECKSIG
+
+이렇게 하면 앨리스가 언제든지 최신 약정 트랜잭션을 게시하고 24시간 후에 자금을 사용할 수 있지만, 앨리스가 취소된 트랜잭션을 릴레이하는 경우 밥이 24시간 내에 자금을 청구할 수 있도록 보장합니다.
+
+CHECKLOCKTIMEVERIFY을 사용하면 다음과 같습니다:
+
+    HASH160 <revokehash> EQUAL
+    IF
+        <Bob's pubkey>
+    ELSE
+        "2015/12/15" CHECKLOCKTIMEVERIFY DROP
+        <Alice's pubkey>
+    ENDIF
+    CHECKSIG
+
+이러한 형태의 거래는 2015년 12월 16일까지 앵커를 사용하지 않은 경우 취소된 약정이더라도 앨리스는 밥에게 청구할 시간을 주지 않고 즉시 이 약정을 사용할 수 있다는 의미입니다.
+
+이는 채널에 블록체인을 건드리지 않고는 뒤로 미룰 수 없는 마감일이 있으며, 마감일이 지날 때까지 자금을 사용할 수 없을 수도 있다는 뜻입니다. CHECKSEQUENCEVERIFY를 사용하면 이러한 트레이드 오프를 피할 수 있습니다.
+
+해시드 타임록 콘트랙트(HTLCs, Hashed Time-Lock Contracts)는 원칙적으로 앨리스가 비밀 R을 발견하거나 타임아웃에 도달하는지에 따라 앨리스 또는 밥에게 지불할 수 있기 때문에 조금 더 복잡하지만, 동일한 원칙이 적용됩니다 -- 앨리스의 약정 트랜잭션에서 앨리스에게 지불하는 브랜치는 지연이 발생하고 취소 비밀(revocation secret)이 알려진 경우 상대방이 전체 출력을 청구할 수 있습니다. 앨리스의 약정 트랜잭션에서 CHECKSEQUENCEVERIFY를 사용하면 HTLC는 앨리스에게 지불가능합니다:
+
+    HASH160 DUP <R-HASH> EQUAL
+    IF
+        "24h" CHECKSEQUENCEVERIFY
+        2DROP
+        <Alice's pubkey>
+    ELSE
+        <Commit-Revocation-Hash> EQUAL
+        NOTIF
+            "2015/10/20 10:33" CHECKLOCKTIMEVERIFY DROP
+        ENDIF
+        <Bob's pubkey>
+    ENDIF
+    CHECKSIG
+
+그리고 대응하는 밥의 약정 트랜잭션은 다음과 같습니다:
+
+   HASH160 DUP <R-HASH> EQUAL
+   SWAP <Commit-Revocation-Hash> EQUAL ADD
+   IF
+       <Alice's pubkey>
+   ELSE
+       "2015/10/20 10:33" CHECKLOCKTIMEVERIFY
+       "24h" CHECKSEQUENCEVERIFY
+       2DROP
+       <Bob's pubkey>
+   ENDIF
+   CHECKSIG
+
+위의 마지막 브랜치에서 CHECKSEQUENCEVERIFY와 CHECKLOCKTIMEVERIFY가 둘 다 사용된 이유는 두 개의 시간 초과가 모두 완료되고 앨리스가 취소 비밀(revocation secret)을 밝힐 때까지 밥이 출력을 사용할 수 없도록 하기 위함입니다.
+
+[https://github.com/ElementsProject/lightning/blob/master/doc/deployable-lightning.pdf 배포 가능한 라이트닝] 문서를 참조하세요.
+
+
+====양방향 페깅된 사이드체인====
+
+양방향 페깅된 사이드체인에는 새로운 REORGPROOFVERIFY 연산자가 필요하며, 그 의미는 이 BIP의 범위를 벗어납니다. CHECKSEQUENCEVERIFY는 반환 페그가 게시된 후 재구성 증명을 게시하기에 충분한 시간이 경과했는지 확인하는 데 사용됩니다:
+
+    IF
+        lockTxHeight <lockTxHash> nlocktxOut [<workAmount>] reorgBounty Hash160(<...>) <genesisHash> REORGPROOFVERIFY
+    ELSE
+        withdrawLockTime CHECKSEQUENCEVERIFY DROP HASH160 p2shWithdrawDest EQUAL
+    ENDIF
+
+
+==스펙==
+
+정확한 의미와 해당 의미에 대한 자세한 근거는 아래에 재현된 참조 구현을 참조하세요.
+
+<pre>
+/* Below flags apply in the context of BIP 68 */
+/* If this flag set, CTxIn::nSequence is NOT interpreted as a
+ * relative lock-time. */
+static const uint32_t SEQUENCE_LOCKTIME_DISABLE_FLAG = (1 << 31);
+
+/* If CTxIn::nSequence encodes a relative lock-time and this flag
+ * is set, the relative lock-time has units of 512 seconds,
+ * otherwise it specifies blocks with a granularity of 1. */
+static const uint32_t SEQUENCE_LOCKTIME_TYPE_FLAG = (1 << 22);
+
+/* If CTxIn::nSequence encodes a relative lock-time, this mask is
+ * applied to extract that lock-time from the sequence field. */
+static const uint32_t SEQUENCE_LOCKTIME_MASK = 0x0000ffff;
+   
+case OP_NOP3:
+{
+    if (!(flags & SCRIPT_VERIFY_CHECKSEQUENCEVERIFY)) {
+        // not enabled; treat as a NOP3
+        if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS) {
+            return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+        }
+        break;
+    }
+
+    if (stack.size() < 1)
+       return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+
+    // Note that elsewhere numeric opcodes are limited to
+    // operands in the range -2**31+1 to 2**31-1, however it is
+    // legal for opcodes to produce results exceeding that
+    // range. This limitation is implemented by CScriptNum's
+    // default 4-byte limit.
+    //
+    // Thus as a special case we tell CScriptNum to accept up
+    // to 5-byte bignums, which are good until 2**39-1, well
+    // beyond the 2**32-1 limit of the nSequence field itself.
+    const CScriptNum nSequence(stacktop(-1), fRequireMinimal, 5);
+
+    // In the rare event that the argument may be < 0 due to
+    // some arithmetic being done first, you can always use
+    // 0 MAX CHECKSEQUENCEVERIFY.
+    if (nSequence < 0)
+        return set_error(serror, SCRIPT_ERR_NEGATIVE_LOCKTIME);
+
+    // To provide for future soft-fork extensibility, if the
+    // operand has the disabled lock-time flag set,
+    // CHECKSEQUENCEVERIFY behaves as a NOP.
+    if ((nSequence & CTxIn::SEQUENCE_LOCKTIME_DISABLE_FLAG) != 0)
+        break;
+
+    // Compare the specified sequence number with the input.
+    if (!checker.CheckSequence(nSequence))
+        return set_error(serror, SCRIPT_ERR_UNSATISFIED_LOCKTIME);
+
+    break;
+}
+    
+bool TransactionSignatureChecker::CheckSequence(const CScriptNum& nSequence) const
+{
+    // Relative lock times are supported by comparing the passed
+    // in operand to the sequence number of the input.
+    const int64_t txToSequence = (int64_t)txTo->vin[nIn].nSequence;
+
+    // Fail if the transaction's version number is not set high
+    // enough to trigger BIP 68 rules.
+    if (static_cast<uint32_t>(txTo->nVersion) < 2)
+        return false;
+
+    // Sequence numbers with their most significant bit set are not
+    // consensus constrained. Testing that the transaction's sequence
+    // number do not have this bit set prevents using this property
+    // to get around a CHECKSEQUENCEVERIFY check.
+    if (txToSequence & CTxIn::SEQUENCE_LOCKTIME_DISABLE_FLAG)
+        return false;
+
+    // Mask off any bits that do not have consensus-enforced meaning
+    // before doing the integer comparisons
+    const uint32_t nLockTimeMask = CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG | CTxIn::SEQUENCE_LOCKTIME_MASK;
+    const int64_t txToSequenceMasked = txToSequence & nLockTimeMask;
+    const CScriptNum nSequenceMasked = nSequence & nLockTimeMask;
+
+    // There are two kinds of nSequence: lock-by-blockheight
+    // and lock-by-blocktime, distinguished by whether
+    // nSequenceMasked < CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG.
+    //
+    // We want to compare apples to apples, so fail the script
+    // unless the type of nSequenceMasked being tested is the same as
+    // the nSequenceMasked in the transaction.
+    if (!(
+        (txToSequenceMasked <  CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG && nSequenceMasked <  CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG) ||
+        (txToSequenceMasked >= CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG && nSequenceMasked >= CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG)
+    ))
+        return false;
+
+    // Now that we know we're comparing apples-to-apples, the
+    // comparison is a simple numeric one.
+    if (nSequenceMasked > txToSequenceMasked)
+        return false;
+
+    return true;
+}
+</pre>
+
+==참조 구현==
+
+참조 구현은 다음 풀 리퀘스트에서 제공됩니다:
+
+https://github.com/bitcoin/bitcoin/pull/7524
+
+
+==배포==
+
+이 BIP는 BIP9의 "versionbits"를 0으로 배포해야 합니다.
+
+비트코인 '''메인넷'''의 경우, BIP9 '''시작 시간'''은 2016년 5월 1일 자정(UTC)이며(에포크 타임스탬프 1462060800), BIP9 '''타임아웃'''은 2017년 5월 1일 자정(UTC)입니다(에포크 타임스탬프 1493596800).
+
+비트코인 '''테스트넷'''의 경우, BIP9 '''시작 시간'''은 2016년 3월 1일 자정(UTC)이며(에포크 타임스탬프 1456790400), BIP9 '''타임아웃'''은 2017년 5월 1일 자정(UTC)입니다(에포크 타임스탬프 1493596800).
+
+이 BIP는 동일한 배포 메커니즘을 사용하여 BIP68 및 BIP113과 동시에 배포해야 합니다.
+
+==크레딧==
+
+마크 프라이든배치(Mark Friedenbach)는 상대적인 잠금 시간을 달성하기 위해 시퀀스 넘버를 적용하는 방법을 고안했으며, CHECKSEQUENCEVERIFY의 참조 구현을 작성했습니다.
+
+참조 구현과 이 BIP는 밀접하게 관련된 BIP 65를 위해  Peter Todd가 수행한 작업에 크게 기반했습니다.
+
+이 BIP 문서는 BtcDrak이 작성했습니다.
+
+사용 사례 예시에 기여해주신 에릭 롬브로조(Eric Lombrozo)와 안토니 타운(Anthony Towns)에게 감사드립니다.
+
+
+==참고 자료==
+
+[https://github.com/bitcoin/bips/blob/master/bip-0009.mediawiki BIP 9] Versionbits
+
+[https://github.com/bitcoin/bips/blob/master/bip-0068.mediawiki BIP 68] Relative lock-time through consensus-enforced sequence numbers
+
+[https://github.com/bitcoin/bips/blob/master/bip-0065.mediawiki BIP 65] OP_CHECKLOCKTIMEVERIFY
+
+[https://github.com/bitcoin/bips/blob/master/bip-0113.mediawiki BIP 113] Median past block time for time-lock constraints
+
+[http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/000021.html HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes]
+
+[http://lightning.network/lightning-network-paper.pdf Lightning Network]
+
+[https://github.com/ElementsProject/lightning/blob/master/doc/deployable-lightning.pdf Deployable Lightning]
+
+[http://diyhpl.us/diyhpluswiki/transcripts/sf-bitcoin-meetup/2015-02-23-scaling-bitcoin-to-billions-of-transactions-per-day/ Scaling Bitcoin to Billions of Transactions Per Day]
+
+[http://lists.linuxfoundation.org/pipermail/bitcoin-dev/2015-August/010396.html Softfork deployment considerations]
+
+[https://web.archive.org/web/20210925124425/https://gist.github.com/sipa/bf69659f43e763540550 Version bits]
+
+[https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2013-April/002433.html Jeremy Spilman Micropayment Channels]
+
+
+==저작권==
+
+이 문서는 퍼블릭 도메인에 배치되어 있습니다.
+
+

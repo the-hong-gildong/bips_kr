@@ -1,0 +1,115 @@
+<pre>
+  BIP: 49
+  레이어: 애플리케이션
+  제목: P2WPKH-nested-in-P2SH 기반 계좌를 위한 유도 체계
+  작성자: 다니엘 웨이글(Daniel Weigl) <DanielWeigl@gmx.at>
+  코멘트-요약: 아직 코멘트 없음.
+  코멘트-URI: https://github.com/bitcoin/bips/wiki/Comments:BIP-0049
+  상태: 최종
+  타입: 표준 트랙
+  생성일: 2016-05-19
+  라이선스: PD
+</pre>
+* 원문: https://github.com/bitcoin/bips/blob/master/bip-0049.mediawiki
+* 싱크: https://github.com/bitcoin/bips/commit/1eefea0456d661b4c51f3a40b7262d6a99161edd#diff-a9613c522153d9d28a05880588ea2efc780563d0805e070a04902d0810d88b8b
+
+==초록==
+
+본 BIP는 세그윗 트랜잭션에 대해 P2WPKH-nested-in-P2SH ([[bip-0141_kr.mediawiki|BIP 141(kr)]]) 직렬화 형식을 사용하는 HD 지갑의 유도 체계를 정의합니다.
+
+==동기==
+
+P2WPKH-nested-in-P2SH ([[bip-0141_kr.mediawiki#p2wpkh-nested-in-bip16-p2sh|BIP 141(kr)]]) 트랜잭션을 사용하려면 공통 유도 체계가 필요합니다. 이를 통해 사용자는 동일한 마스터 시드 및/또는 단일 계좌로 다른 HD 지갑을 원활하게 사용할 수 있습니다.
+
+따라서 사용자는 전용 세그윗 계좌를 생성해야 합니다. 이 계좌는 본 BIP와 호환되는 지갑에서만 계좌를 감지하고 적절하게 처리할 수 있도록 보장합니다.
+
+===고려 사항===
+현재 BIP44 지원 지갑에는 일반적으로 두 가지 다른 접근 방식이 가능합니다:
+
+1) 사용자가 이미 사용 중인 동일한 계좌(들)을 사용하도록 허용하되, 세그윗으로 인코딩된 주소(segregated witness encoded addresses)를 추가합니다.
+
+1.1) BIP44에 정의된 것과 동일한 공개키를 사용하되, 일반적인 P2PKH 주소 외에 P2SH 주소도 공개키로부터 유도합니다.
+
+1.2) 동일한 계좌의 루트(account root)를 사용하되, 서로 다른 외부 및 내부 체인 루트를 분기하여 세그윗 주소에 대한 전용 공개키를 유도합니다.
+
+2) 세그윗 주소에만 사용되는 전용 계좌를 만듭니다.
+
+솔루션1에는 공통적인 단점이 있습니다. 사용자가 BIP49 호환 지갑의 마스터시드를 BIP49 비호환 지갑으로 가져오거나 복구하는 경우, 계좌는 표시되지만 일부 UTXO가 누락될 수 있다는 점입니다.
+
+따라서 본 BIP는 더 눈에 잘 띄는 방식으로 실패하는 솔루션2를 사용합니다. 계정이 표시되거나 전혀 표시되지 않습니다. 사용자는 다른 지갑에서 동일한 시드를 사용한 후 잔액을 체크할 필요가 없습니다.
+
+
+==스펙==
+
+본 BIP는 [[bip-0032_kr.mediawiki|BIP 32(kr)]] 루트 계좌를 기반으로 여러 결정론적 주소를 유도하는 데 필요한 두 단계를 정의합니다.
+
+===공개키 유도===
+
+루트 계좌에서 공개키를 유도하기 위해 본 BIP는 [[bip-0044_kr.mediawiki|BIP 44(kr)]]에 정의된 것과 동일한 계좌 구조를 사용하지만, 오직 다른 트랜잭션 직렬화 방법을 나타내기 위해서만 다른 목적(purpose) 값을 사용합니다.
+
+<pre>
+m / purpose' / coin_type' / account' / change / address_index
+</pre>
+
+`purpose`-경로 레벨의 경우 `49'`를 사용합니다. 나머지 레벨은 BIP44에 정의된 대로 사용됩니다.
+
+
+===주소 유도===
+
+위에서 계산한 공개 키에서 P2SH 주소를 유도하기 위해 [[bip-0141_kr.mediawiki#p2wpkh-nested-in-bip16-p2sh|BIP 141(kr)]]에서 정의된 캡슐화를 사용합니다:
+
+    witness:      <signature> <pubkey>
+    scriptSig:    <0 <20-byte-key-hash>>
+                  (0x160014{20-byte-key-hash})
+    scriptPubKey: HASH160 <20-byte-script-hash> EQUAL
+                  (0xA914{20-byte-script-hash}87)
+
+
+===확장키 버전===
+
+확장 키를 직렬화할 때 이 체계는 대체 버전 바이트를 사용합니다. 확장 공개키는 "ypub" 접두사를 생성하기 위해 <code>0x049d7cb2</code>를 사용하고, 비밀키는 "yprv" 접두사를 생성하기 위해 <code>0x049d7878</code>를 사용합니다. 테스트넷은 "upub" 접두사를 생성하기 위해 <code>0x044a5262</code>를 사용하고 "uprv" 접두사를 생성하기 위해 <code>0x044a4e28</code>을(를) 사용합니다.
+
+추가적으로 등록된 버전 바이트는 [[https://github.com/satoshilabs/slips/blob/master/slip-0132.md|SLIP-0132]]에 나열되어 있습니다.
+
+
+==하위 호환성==
+
+본 BIP는 [[#considerations|considerations]]에서 설명한 대로 설계상 이전 버전과 호환되지 않습니다. 호환되지 않는 지갑은 계좌를 전혀 검색하지 못하며 사용자는 문제가 있다는 것을 알 수 있습니다.
+
+
+==테스트 벡터==
+
+<pre>
+  masterseedWords = abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about
+  masterseed = uprv8tXDerPXZ1QsVNjUJWTurs9kA1KGfKUAts74GCkcXtU8GwnH33GDRbNJpEqTvipfCyycARtQJhmdfWf8oKt41X9LL1zeD2pLsWmxEk3VAwd (testnet)
+
+  // Account 0, root = m/49'/1'/0'
+  account0Xpriv = uprv91G7gZkzehuMVxDJTYE6tLivdF8e4rvzSu1LFfKw3b2Qx1Aj8vpoFnHdfUZ3hmi9jsvPifmZ24RTN2KhwB8BfMLTVqaBReibyaFFcTP1s9n (testnet)
+  account0Xpub = upub5EFU65HtV5TeiSHmZZm7FUffBGy8UKeqp7vw43jYbvZPpoVsgU93oac7Wk3u6moKegAEWtGNF8DehrnHtv21XXEMYRUocHqguyjknFHYfgY (testnet)
+
+  // Account 0, first receiving private key = m/49'/1'/0'/0/0
+  account0recvPrivateKey = cULrpoZGXiuC19Uhvykx7NugygA3k86b3hmdCeyvHYQZSxojGyXJ
+  account0recvPrivateKeyHex = 0xc9bdb49cfbaedca21c4b1f3a7803c34636b1d7dc55a717132443fc3f4c5867e8
+  account0recvPublicKeyHex = 0x03a1af804ac108a8a51782198c2d034b28bf90c8803f5a53f76276fa69a4eae77f
+
+  // Address derivation
+  keyhash = HASH160(account0recvPublicKeyHex) = 0x38971f73930f6c141d977ac4fd4a727c854935b3
+  scriptSig = <0 <keyhash>> = 0x001438971f73930f6c141d977ac4fd4a727c854935b3
+  addressBytes = HASH160(scriptSig) = 0x336caa13e08b96080a32b5d818d59b4ab3b36742
+
+  // addressBytes base58check encoded for testnet
+  address = base58check(prefix | addressBytes) = 2Mww8dCYPUpKHofjgcXcBCEGmniw9CoaiD2 (testnet)
+</pre>
+
+
+==참고 자료==
+
+* [[bip-0016_kr.mediawiki|BIP16(kr) - Pay to Script Hash]]
+* [[bip-0032_kr.mediawiki|BIP32(kr) - 계층적 결정론적 지갑]]
+* [[bip-0043_kr.mediawiki|BIP43(kr) - 결정론적 지갑을 위한 목적 필드]]
+* [[bip-0044_kr.mediawiki|BIP44(kr) - 결정론적 지갑을 위한 다중-계좌 계층]]
+* [[bip-0141_kr.mediawiki|BIP141(kr) - 세그윗 (컨센서스 레이어)]]
+
+== 저작권 ==
+
+이 문서는 퍼블릭 도메인에 배치되어 있습니다.

@@ -1,0 +1,320 @@
+RECENT CHANGES:
+* (2013년 4월 16일) i ≥ 0x80000000에 대한 private derivation 추가 (부모 프라이빗 키 유출 위험 감소)
+* (2013 4월 40일) I<sub>L</sub>의 곱셈에서 I<sub>L</sub>의 덧셈으로 전환 (더 빠르고 쉬운 구현)
+* (2013 5월 25일) 테스트 벡터 추가
+* (2014 1월 15일) 인덱스 ≥ 0x80000000인 키를 강화된 키(hardened key)로 이름 변경하고 명시적인 변환 함수 추가.
+* (2017년 2월 24일) 선행 0이 있는 강화 유도에 대한 테스트 벡터 추가
+* (2020년 11월 4일) 선행 0이 있는 강화 유도에 대한 새로운 테스트 벡터 추가
+
+<pre>
+  BIP: 32
+  레이어: 애플리케이션
+  제목: 계층적 결정론적 지갑
+  작성자: 피터 윌러(Pieter Wuille) <pieter.wuille@gmail.com>
+  코멘트-요약: 아직 코멘트 없음.
+  코멘트-URI: https://github.com/bitcoin/bips/wiki/Comments:BIP-0032
+  상태: 최종
+  타입: 정보성
+  생성일: 2012-02-11
+  라이선스: BSD-2-Clause
+</pre>
+* 원문: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki
+* 싱크: https://github.com/bitcoin/bips/commit/1b87fc5c263f4d312ccd34411aee8da4f1b74df0
+
+==초록==
+
+이 문서는 계층적 결정론적 지갑(또는 "HD 지갑")에 대해 설명합니다. HD 지갑은 코인을 사용할 수 있는 기능이 있거나 없는 여러 시스템과 부분적으로 또는 전체적으로 공유할 수 있습니다.
+
+이 명세서는 서로 다른 클라이언트 간에 교환할 수 있는 결정론적 지갑에 대한 표준을 설정하기 위한 것입니다. 여기에 설명된 지갑에는 많은 기능이 있지만, 모든 기능이 지원 클라이언트에 필수적인 것은 아닙니다.
+
+명세서는 두 부분으로 구성됩니다. 첫 번째 부분에서는 단일 시드에서 키페어 트리를 유도하는 시스템을 소개합니다. 두 번째 파트에서는 이러한 트리 위에 지갑 구조를 구축하는 방법을 설명합니다.
+
+==저작권==
+
+본 BIP는 2-clause BSD 라이선스에 따라 라이선스가 부여됩니다.
+
+==동기==
+
+비트코인 참조 클라이언트는 무작위로 생성된 키를 사용합니다. 모든 거래 후 백업을 할 필요가 없도록 (기본 설정으로) 100개의 키가 예비 키 풀에 캐시됩니다. 하지만 이 지갑은 여러 시스템에서 동시에 공유하여 사용하기 위한 것이 아닙니다. 지갑 암호화 기능을 사용해 개인 키를 숨기고 비밀번호를 공유하지 않는 것을 지원하지만, 이러한 '중성화된' 지갑은 공개 키를 생성할 수 있는 능력도 잃게 됩니다.
+
+결정론적 지갑은 자주 백업할 필요가 없으며, 타원 곡선 수학은 개인 키를 공개하지 않고 공개 키를 계산할 수 있는 체계를 허용합니다. 예를 들어, 웹샵 비즈니스는 웹서버가 각 주문 또는 각 고객에 대해 새로운 주소(공개 키 해시)를 생성하도록 허용하면서 웹서버에 해당 개인 키(수신된 자금을 사용하는 데 필요한 키)에 대한 액세스 권한을 부여하지 않을 수 있습니다.
+
+그러나 결정론적 지갑은 일반적으로 키페어의 단일 "체인"으로 구성됩니다. 체인이 하나뿐이라는 것은 지갑 공유가 전부 아니면 전무(all-ornothing) 방식으로 이뤄진다는 뜻입니다. 하지만 일부 (공개) 키만 공유하고 복구할 수 있기를 원하는 경우도 있습니다. 웹샵의 예에서 웹서버는 판매자 지갑의 모든 공개 키에 액세스할 필요가 없으며, 고객의 결제를 받는 데 사용되는 주소에만 액세스하고 판매자가 돈을 쓸 때 생성되는 잔돈 주소에는 액세스할 필요가 없습니다. 계층적 결정론적 지갑은 단일 루트에서 파생된 여러 키페어 체인을 지원하여 이러한 선택적 공유를 허용합니다.
+
+==스펙: 키 유도==
+
+===컨벤션===
+
+이 글의 나머지 부분에서는 비트코인에서 사용되는 공개 키 암호화, 즉 secp256k1에 정의된 필드와 커브 파라미터를 사용하는 타원 곡선 암호화를 가정하겠습니다. (http://www.secg.org/sec2-v2.pdf). 아래 변수도 마찬가지 입니다:
+* 커브의 오더(n)를 모듈로 연산 한 정수.
+* 커브 위에 있는 포인트(point)의 좌표.
+* 바이트 시퀀스.
+
+두 좌표쌍의 덧셈 (+)은 EC 군 연산의 응용으로 정의됩니다.
+연결(concatenation) (||)은 한 바이트 시퀀스를 다른 바이트 시퀀스에 추가하는 연산입니다.
+
+표준 변환 함수처럼, 우리는 다음과 같이 정의합니다:
+* point(p): secp256k1 기준점과 정수 p의 EC 포인트 곱셈(EC 군 연산의 반복 적용)으로 인한 좌표 쌍을 반환합니다.
+* ser<sub>32</sub>(i): 32비트 부호 없는 정수 i를 4바이트 시퀀스로 직렬화합니다. 가장 앞이 MSB(most significant byte) 입니다.
+* ser<sub>256</sub>(p): 정수 p를 32바이트 시퀀스로 직렬화합니다. 가장 앞이 MSB(most significant byte) 입니다.
+* ser<sub>P</sub>(P): 좌표쌍 P = (x,y) 를 SEC1 압축 형식: (0x02 or 0x03) || ser<sub>256</sub>(x) 바이트 시퀀스로 직렬화합니다. 여기서 헤더 바이트는 생략된 y 좌표의 패리티에 따라 달라집니다.
+* parse<sub>256</sub>(p): 32바이트 시퀀스를 256비트 숫자로 해석합니다. 가장 앞이 MSB(most significant byte) 입니다.
+
+
+===확장키===
+
+다음으로, 하나의 부모키에서 여러 개의 자식키를 유도하는 함수를 정의합니다. 이러한 함수가 키 자체에만 의존하는 것을 방지하기 위해 먼저 개인키와 공개키를 추가적인 256 비트의 엔트로피로 확장합니다. 체인 코드라고 불리는 이 확장은 대응하는 개인키와 공개키에 대해 동일하며 32 바이트로 구성됩니다.
+
+확장 개인키를 (k, c)로 표현하며, 여기서 k는 일반 개인키, c는 체인 코드입니다. 확장 공개키는 (K, c)로 표현하며, K = point(k), c는 체인 코드입니다.
+
+각 확장키에는 일반 자식키 2<sup>31</sup>개와 강화 자식키 2<sup>31</sup>개가 있습니다. 이러한 각 자식키는 인덱스를 갖고 있습니다. 일반 자식키는 인덱스로 0 부터 2<sup>31</sup>-1 까지 사용합니다. 강화 자식키는 인덱스로 2<sup>31</sup> 부터 2<sup>32</sup>-1 까지 사용합니다. 강화 키 표기를 쉽게 하기 위해 i+2<sup>31</sup>를 i<sub>H</sub>로 표현합니다.
+
+===자식 키 유도(CKD, Child key derivation) 함수===
+
+부모 확장키와 인덱스 i가 주어지면 해당 자식 확장키를 계산할 수 있습니다. 이를 위한 알고리즘은 자식이 강화 키인지 아닌지(또는 i ≥ 2<sup>31</sup> 인지 아닌지), 그리고 개인 키인지 공개 키인지에 따라 달라집니다.
+
+====부모 개인키 &rarr; 자식 개인키====
+
+함수 CKDpriv((k<sub>par</sub>, c<sub>par</sub>), i) &rarr; (k<sub>i</sub>, c<sub>i</sub>) 는 부모 확장 개인키에서 자식 확장 개인키를 계산합니다.:
+* i ≥ 2<sup>31</sup> 인지 체크합니다(자식이 강화 키인지).
+** 강화 자식: I = HMAC-SHA512(Key = c<sub>par</sub>, Data = 0x00 || ser<sub>256</sub>(k<sub>par</sub>) || ser<sub>32</sub>(i)). (참고: 0x00은 개인 키의 길이를 33바이트로 만들기 위해 패딩합니다.)
+** 일반 자식: I = HMAC-SHA512(Key = c<sub>par</sub>, Data = ser<sub>P</sub>(point(k<sub>par</sub>)) || ser<sub>32</sub>(i)).
+* I 를 두 개의 32바이트 시퀀스 I<sub>L</sub> 와 I<sub>R</sub>로 분할합니다.
+* 반환된 자식키 k<sub>i</sub> 는 parse<sub>256</sub>(I<sub>L</sub>) + k<sub>par</sub> (mod n).
+* 반환된 체인 코드 c<sub>i</sub> 는 I<sub>R</sub>.
+* parse<sub>256</sub>(I<sub>L</sub>) ≥ n 또는 k<sub>i</sub> = 0 일 경우, 결과키는 유효하지 않고 i의 다음 값으로 진행해야 합니다. (참고: 이것은 2<sup>127</sup> 분의 1 보다 낮은 확률로 발생합니다.)
+
+HMAC-SHA512 한수는 [http://tools.ietf.org/html/rfc4231 RFC 4231]에 명시되어 있습니다.
+
+====부모 공개키 &rarr; 자식 공개키====
+
+함수 CKDpub((K<sub>par</sub>, c<sub>par</sub>), i) &rarr; (K<sub>i</sub>, c<sub>i</sub>) 는 부모 확장 공개키로부터 자식 확장 공개키를 계산합니다. 이것은 비강화 자식키인 경우에만 정의됩니다.
+* i ≥ 2<sup>31</sup> 인지 체크합니다(자식이 강화 키인지).
+** 강화 자식: 실패를 반환
+** 일반 자식이 아닐 경우: I = HMAC-SHA512(Key = c<sub>par</sub>, Data = ser<sub>P</sub>(K<sub>par</sub>) || ser<sub>32</sub>(i)).
+* I 를 두 개의 32바이트 시퀀스 I<sub>L</sub> 와 I<sub>R</sub>로 분할합니다.
+* 반환된 자식키 K<sub>i</sub> 는 point(parse<sub>256</sub>(I<sub>L</sub>)) + K<sub>par</sub>.
+* 반환된 체인 코드 c<sub>i</sub> 는 I<sub>R</sub>.
+* parse<sub>256</sub>(I<sub>L</sub>) ≥ n 또는 K<sub>i</sub> 무한원점일 경우, 결과키는 유효하지 않고 i의 다음 값으로 진행해야 합니다.
+
+====부모 개인키 &rarr; 자식 공개키====
+
+함수 N((k, c)) &rarr; (K, c) 는 확장 개인키에 해당하는 확장 공개키를 계산합니다("중성화된(neutered)" 버전, 트랜잭션 서명 기능을 제거하였기 때문에 "중성화된" 버전이라고 함).
+* 반환된 키 K 는 point(k).
+* 반환된 체인 코드 c 는 전달된 바로 그 체인코드.
+
+부모 개인키의 자식 공개키를 계산하기 위해서:
+* N(CKDpriv((k<sub>par</sub>, c<sub>par</sub>), i)) (항상 동작합니다).
+* CKDpub(N(k<sub>par</sub>, c<sub>par</sub>), i) (비강화 자식키일 때만 동작합니다).
+
+이 두 키가 동등하다는 사실이 비강화 키를 유용하게 만드는 이유이며(개인키를 몰라도 주어진 부모키의 자식 공개키를 유도할 수 있음), 강화 키와 구별되는 이유이기도 합니다. (더 유용한) 비강화 키를 항상 사용하지 않는 이유는 보안 때문입니다. 자세한 내용은 아래를 참조하세요.
+
+====부모 공개키 &rarr; 자식 개인키====
+
+이것은 불가능 합니다.
+
+===키 트리===
+
+다음 단계는 여러 개의 CKD 구조를 연결하여 트리를 구축하는 것입니다. 하나의 루트인 마스터 확장 키 m에서 시작하여 여러 값 i에 대해 CKDpriv(m,i)를 평가하면 여러 개의 레벨-1 파생 노드를 얻을 수 있습니다. 이들 각각은 다시 확장 키이므로 CKDpriv는 이들에도 적용될 수 있습니다.
+
+표기를 줄이기 위해, 우리는 CKDpriv(CKDpriv(CKDpriv(m,3<sub>H</sub>),2),5) 를 m/3<sub>H</sub>/2/5 로 표기할 것입니다. 공개키에도 동일하게, CKDpub(CKDpub(CKDpub(M,3),2),5)을 M/3/2/5 로 표기합니다. 그 결과 다음과 같은 동일성(identity)이 생성됩니다:
+* N(m/a/b/c) = N(m/a/b)/c = N(m/a)/b/c = N(m)/a/b/c = M/a/b/c.
+* N(m/a<sub>H</sub>/b/c) = N(m/a<sub>H</sub>/b)/c = N(m/a<sub>H</sub>)/b/c.
+하지만 N(m/a<sub>H</sub>)은 N(m)/a<sub>H</sub>로 다시 쓸 수 없습니다. 후자는 불가능하기 때문입니다.
+
+트리의 각 리프 노드는 실제 키에 해당하며, 내부 노드는 리프 노드에서 내려오는 키 콜렉션에 해당합니다. 리프 노드의 체인 코드는 무시되며, 내장된 개인키 또는 공개키만 관련이 있습니다. 이러한 구조로 인해 확장 개인키를 알면 모든 하위 개인키와 공개키를 재구성할 수 있고, 확장 공개키를 알면 모든 하위 비강화 공개키를 재구성할 수 있습니다.
+
+===키 식별자===
+
+확장 키는 체인 코드를 무시하고 직렬화된 ECDSA 공개 키 K의 Hssh160(SHA256 뒤의 RIPEMD160)으로 식별할 수 있습니다. 이는 기존 비트코인 주소에 사용된 데이터와 정확히 일치합니다. 하지만 이 데이터는 주소로 해석될 수 있으므로 base58 형식으로 표현하는 것은 권장하지 않습니다(지갑 소프트웨어가 체인 키 자체에 대한 결제를 수락할 필요는 없습니다).
+
+식별자의 처음 32비트를 키 지문(fingerprint)이라고 합니다.
+
+===직렬화 포맷===
+
+확장 공개키와 개인키는 다음과 같이 직렬화됩니다.
+* 4 바이트: 버전 바이트 (메인넷: 0x0488B21E 공개, 0x0488ADE4 개인; 테스트넷: 0x043587CF 공개, 0x04358394 개인)
+* 1 바이트: 깊이: 마스터 노드 0x00 , 레벨-1 파생 키 0x01, ....
+* 4 바이트: 부모 키의 지문 (마스터 키라면 0x00000000)
+* 4 바이트: 자식 번호. 직렬화 되고 있는 키 x<sub>i</sub>에 대해 x<sub>i</sub> = x<sub>par</sub>/i 안의 i를 위한 ser<sub>32</sub>(i) 입니다.
+* 32 바이트: 체인 코드
+* 33 바이트: 공개키 또는 개인키 데이터 (공개키는 ser<sub>P</sub>(K), 개인키는 0x00 || ser<sub>256</sub>(k))
+
+이 78바이트 구조는 Base58로 인코딩된 다른 비트코인 데이터와 마찬가지로 먼저 32개의 체크섬 비트(이중 SHA-256 체크섬에서 파생됨)를 추가한 다음 Base58로 변환할 수 있습니다. 그 결과 최대 112자의 Base58 인코딩 문자열이 생성됩니다. 버전 바이트의 선택으로 인해 Base58 표현은 메인넷에서는 "xprv" 또는 "xpub", 테스트넷에서는 "tprv" 또는 "tpub"로 시작됩니다.
+
+부모 노드의 지문은 소프트웨어에서 부모 노드와 자식 노드를 빠르게 감지하는 방법으로만 사용되며, 소프트웨어가 충돌을 처리할 수 있어야 한다는 점에 유의하세요. 내부적으로는 전체 160비트 식별자를 사용할 수 있습니다.
+
+직렬화된 확장 공개키를 가져올 때, 구현체는 공개키 데이터의 X 좌표가 곡선의 한 지점에 해당하는지 확인해야 합니다. 그렇지 않으면 확장 공개키가 유효하지 않습니다.
+
+===마스터키 생성===
+
+가능한 확장 키 쌍의 총 개수는 거의 2<sup>512</sup>개이지만, 생성된 키의 길이는 256비트에 불과하며 보안 측면에서 그 절반 정도에 불과합니다. 따라서 마스터 키는 직접 생성되지 않고 잠재적으로 짧은 시드 값에서 생성됩니다.
+
+* 선택한 길이(128~512비트 사이, 256비트가 권장됨)의 시드 바이트 시퀀스 S를 (P)RNG에서 생성합니다.
+* I = HMAC-SHA512(Key = "Bitcoin seed", Data = S) 를 계산합니다.
+* I 를 두 개의 32바이트 시퀀스 I<sub>L</sub> 와 I<sub>R</sub>로 분할합니다.
+* parse<sub>256</sub>(I<sub>L</sub>) 를 마스터 비밀키로 그리고 I<sub>R</sub> 를 마스터 체인 코드로 사용합니다.
+parse<sub>256</sub>(I<sub>L</sub>) 이 0 이거나 parse<sub>256</sub>(I<sub>L</sub>) ≥ n 이면, 마스터 키는 유효하지 않습니다.
+
+<img src=bip-0032/derivation.png></img>
+
+==스펙: 지갑 구조==
+
+이전 섹션에서는 키 트리와 노드가 명세되었습니다. 다음 단계는 이 트리에 지갑 구조를 부과하는 것입니다. 이 섹션에서 정의한 레이아웃은 기본값일 뿐이며, 모든 기능이 지원되지 않더라도 클라이언트는 호환성을 위해 이 레이아웃을 모방하는 것이 좋습니다.
+
+===기본 월렛 레이아웃===
+
+HDW는 여러 개의 '계좌'로 구성됩니다. 계좌들은 번호가 매겨지며 기본 계좌("")는 0번입니다. 클라이언트는 두 개 이상의 계좌를 지원할 필요는 없습니다 - 지원하지 않는 경우 기본 계좌만 사용합니다.
+
+각 계좌는 내부 키체인과 외부 키체인의 두 가지 키쌍 체인으로 구성됩니다. 외부 키체인은 새 공개 주소를 생성하는 데 사용되며, 내부 키체인은 그 외의 모든 작업(주소 변경, 주소 생성 등..., 통신할 필요가 없는 모든 작업)에 사용됩니다. 분리된 키체인을 지원하지 않는 클라이언트는 모든 작업에 외부 키체인을 사용해야 합니다.
+* m/i<sub>H</sub>/0/k 는 마스터 m에서 파생된 HDW의 계좌 번호 i의 외부 체인의 k번째 키쌍에 해당합니다.
+* m/i<sub>H</sub>/1/k 는 마스터 m에서 파생된 HDW의 계좌 번호 i 내부 체인의 k'번째 키쌍에 해당합니다.
+
+===사용 사례===
+
+====전체 지갑 공유: m====
+
+두 시스템이 하나의 공유 지갑에 액세스해야 하고 둘 다 지출을 수행할 수 있어야 하는 경우, 한 시스템은 마스터 확장 개인키를 공유해야 합니다. 노드는 들어오는 결제를 감시하기 위해 외부 체인을 위한 N개의 룩-어헤드 키 풀을 캐시를 유지할 수 있습니다. 내부 체인에 대한 룩-어헤드는 매우 작을 수 있는데, 여기에는 공백이 예상되지 않기 때문입니다. 사용되지 않은 첫 번째 계좌의 체인에서 추가적인 룩-어헤드를 활성화할 수 있습니다 - 사용될 때 새 계좌 생성을 트리거합니다. 계좌 이름은 여전히 수동으로 입력해야 하며 블록체인을 통해 동기화될 수 없다는 것을 주의하세요.
+
+====감사: N(m/*)====
+
+만약 감사인이 수신 및 발신 결제 목록에 대한 완전한 접근 권한이 필요한 경우, 모든 계좌의 확장 공개키를 공유할 수 있습니다. 이렇게 하면 감사인은 모든 계좌에서 지갑으로의 모든 거래를 볼 수 있지만, 단 하나의 비밀 키도 확인할 수 없습니다.
+
+====사무실 당 잔액: m/i<sub>H</sub>====
+
+여러 독립적인 사무실을 운영하는 비즈니스에서는 모든 사무실에서 단일 마스터로부터 파생된 지갑을 사용할 수 있습니다. 이렇게 하면 본사에서 모든 사무실의 모든 수입 및 지출 거래를 볼 수있는 슈퍼 지갑을 유지할 수 있으며, 사무실 간의 자금 이동도 허용할 수 있습니다.
+
+====반복되는 B2B 트랜잭션: N(m/i<sub>H</sub>/0)====
+
+비즈니스 파트너 간 자주 자금을 이체하는 경우, 특정 계좌 (M/i<sub>H</sub>/0)의 외부 체인에 대한 확장 공개키를 "슈퍼 주소"로 사용하여 각각의 결제마다 새로운 주소를 요청하지 않고도 (쉽게) 연관되지 않는 빈번한 트랜잭션을 허용합니다. 
+이러한 방식은 채굴 풀 운영자가 가변적인 지급 주소로 사용할 수도 있습니다.
+
+====보안되지 않는 송금 수취인: N(m/i<sub>H</sub>/0)====
+
+보안되지 않은 웹서버를 사용하여 전자상거래 사이트를 운영하는 경우, 결제 수취에 사용되는 공개 주소를 알아야 합니다. 웹서버는 단일 계좌의 외부 체인의 확장 공개키만 알면 됩니다. 즉, 웹서버에 불법적으로 액세스하는 사람은 기껏해야 들어오는 모든 결제를 볼 수 있을 뿐 돈을 훔칠 수는 없으며, 나가는 거래를 (사소하게) 구분할 수 없으며, 다른 웹서버가 여러 개 있더라도 다른 웹서버가 받은 결제를 볼 수 없습니다.
+
+==호환성==
+
+이 표준을 준수하려면 클라이언트는 최소한 확장 공개키 또는 개인키를 임포트해 직계 자손에게 지갑 키로 액세스 권한을 부여할 수 있어야 합니다. 명세서의 두 번째 부분에 제시된 지갑 구조(마스터/계좌/체인/서브체인)는 권고 사항일 뿐이며, 구분된 계좌나 내부와 외부 체인을 구분하지 않더라도 쉽게 호환할 수 있도록 최소한의 구조로 제안되었습니다. 그러나 특정 요구사항에 따라 구현이 달라질 수 있으며, 더 복잡한 애플리케이션의 경우 더 복잡한 트리 구조가 필요할 수 있습니다.
+
+==보안==
+
+EC 공개키 암호화 자체에서 기대할 수 있는 것 외에도:
+* 공개키 K가 주어지더라도 공격자는 EC 이산 로그 문제를 푸는 것보다 더 효율적으로 해당 개인 키를 찾을 수 없습니다. (2<sup>128</sup>개의 군 연산이 필요하다고 추정합니다.).
+이 표준의 의도된 보안 속성은 다음과 같습니다:
+* 자식 확장 개인키 (k<sub>i</sub>,c<sub>i</sub>) 와 정수 i가 주어지더라도, 공격자는  HMAC-SHA512의 2<sup>256</sup> 브루트포스보다 더 효율적으로 부모 개인 키 k<sub>par</sub>를 찾을 수 없습니다.
+* 서로 다른 i<sub>j</sub>와 (2 ≤ N ≤ 2<sup>32</sup>-1)에 대해 (인덱스, 확장 개인키) 튜플 (i<sub>j</sub>,(k<sub>i<sub>j</sub></sub>,c<sub>i<sub>j</sub></sub>))가 주어지더라도, 이것들이 공통된 부모 확장 개인키에서 유도되었는지 확인하는 것(예를 들어, 각 j에 대해 CKDpriv((k<sub>par</sub>,c<sub>par</sub>),i<sub>j</sub>)=(k<sub>i<sub>j</sub></sub>,c<sub>i<sub>j</sub></sub>)이 성립하는 (k<sub>par</sub>,c<sub>par</sub>)이 존재하는 경우)은 HMAC-SHA512의 2<sup>256</sup> 브루트 포스보다 더 효율적으로 수행할 수 없습니다.
+단, 다음 속성은 존재하지 않습니다:
+* 부모 확장 공개키(K<sub>par</sub>, c<sub>par</sub>)와 자식 공개키(K<sub>i</sub>)가 주어졌을 때, i를 찾는 것. 이것은 어렵습니다.
+* 부모 확장 공개키(K<sub>par</sub>, c<sub>par</sub>)와 비-강화 자식 개인키(k<sub>i</sub>)가 주어졌을 때, k<sub>par</sub>를 찾는 것. 이것은 어렵습니다.
+
+===시사점===
+
+개인키와 공개키는 여전히 안전하게 보관되어야 합니다. 개인키가 유출되면 코인에 대한 접근이 가능해지고, 공개키가 유출되면 개인정보가 노출될 수 있습니다.
+
+확장 키의 경우 전체 (하위) 키 트리에 해당하기 때문에 더욱 신경 써야 합니다.
+
+즉시 명확하지 않을 수 있는 한 가지 약점은 부모 확장 공개키와 이 키에서 내려오는 어떤 비강화 개인키를 아는 것은 부모 확장 개인키(따라서 이 키에서 내려오는 모든 개인 키와 공개 키)를 아는 것과 같다는 것입니다. 이는 확장 공개키를 일반 공개키보다 더 신중하게 취급해야 한다는 것을 의미합니다.
+이는 강화 키가 존재하는 이유이기도 하며, 트리에서 계좌 레벨에 사용되는 이유이기도 합니다. 이렇게 하면 계좌별(또는 그 이하) 개인키가 유출되더라도 마스터 또는 다른 계좌가 손상될 위험이 없습니다.
+
+
+==테스트 벡터==
+
+===테스트 벡터 1===
+
+Seed (hex): 000102030405060708090a0b0c0d0e0f
+* Chain m
+** ext pub: xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8
+** ext prv: xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi
+* Chain m/0<sub>H</sub>
+** ext pub: xpub68Gmy5EdvgibQVfPdqkBBCHxA5htiqg55crXYuXoQRKfDBFA1WEjWgP6LHhwBZeNK1VTsfTFUHCdrfp1bgwQ9xv5ski8PX9rL2dZXvgGDnw
+** ext prv: xprv9uHRZZhk6KAJC1avXpDAp4MDc3sQKNxDiPvvkX8Br5ngLNv1TxvUxt4cV1rGL5hj6KCesnDYUhd7oWgT11eZG7XnxHrnYeSvkzY7d2bhkJ7
+* Chain m/0<sub>H</sub>/1
+** ext pub: xpub6ASuArnXKPbfEwhqN6e3mwBcDTgzisQN1wXN9BJcM47sSikHjJf3UFHKkNAWbWMiGj7Wf5uMash7SyYq527Hqck2AxYysAA7xmALppuCkwQ
+** ext prv: xprv9wTYmMFdV23N2TdNG573QoEsfRrWKQgWeibmLntzniatZvR9BmLnvSxqu53Kw1UmYPxLgboyZQaXwTCg8MSY3H2EU4pWcQDnRnrVA1xe8fs
+* Chain m/0<sub>H</sub>/1/2<sub>H</sub>
+** ext pub: xpub6D4BDPcP2GT577Vvch3R8wDkScZWzQzMMUm3PWbmWvVJrZwQY4VUNgqFJPMM3No2dFDFGTsxxpG5uJh7n7epu4trkrX7x7DogT5Uv6fcLW5
+** ext prv: xprv9z4pot5VBttmtdRTWfWQmoH1taj2axGVzFqSb8C9xaxKymcFzXBDptWmT7FwuEzG3ryjH4ktypQSAewRiNMjANTtpgP4mLTj34bhnZX7UiM
+* Chain m/0<sub>H</sub>/1/2<sub>H</sub>/2
+** ext pub: xpub6FHa3pjLCk84BayeJxFW2SP4XRrFd1JYnxeLeU8EqN3vDfZmbqBqaGJAyiLjTAwm6ZLRQUMv1ZACTj37sR62cfN7fe5JnJ7dh8zL4fiyLHV
+** ext prv: xprvA2JDeKCSNNZky6uBCviVfJSKyQ1mDYahRjijr5idH2WwLsEd4Hsb2Tyh8RfQMuPh7f7RtyzTtdrbdqqsunu5Mm3wDvUAKRHSC34sJ7in334
+* Chain m/0<sub>H</sub>/1/2<sub>H</sub>/2/1000000000
+** ext pub: xpub6H1LXWLaKsWFhvm6RVpEL9P4KfRZSW7abD2ttkWP3SSQvnyA8FSVqNTEcYFgJS2UaFcxupHiYkro49S8yGasTvXEYBVPamhGW6cFJodrTHy
+** ext prv: xprvA41z7zogVVwxVSgdKUHDy1SKmdb533PjDz7J6N6mV6uS3ze1ai8FHa8kmHScGpWmj4WggLyQjgPie1rFSruoUihUZREPSL39UNdE3BBDu76
+
+===테스트 벡터 2===
+
+Seed (hex): fffcf9f6f3f0edeae7e4e1dedbd8d5d2cfccc9c6c3c0bdbab7b4b1aeaba8a5a29f9c999693908d8a8784817e7b7875726f6c696663605d5a5754514e4b484542
+* Chain m
+** ext pub: xpub661MyMwAqRbcFW31YEwpkMuc5THy2PSt5bDMsktWQcFF8syAmRUapSCGu8ED9W6oDMSgv6Zz8idoc4a6mr8BDzTJY47LJhkJ8UB7WEGuduB
+** ext prv: xprv9s21ZrQH143K31xYSDQpPDxsXRTUcvj2iNHm5NUtrGiGG5e2DtALGdso3pGz6ssrdK4PFmM8NSpSBHNqPqm55Qn3LqFtT2emdEXVYsCzC2U
+* Chain m/0
+** ext pub: xpub69H7F5d8KSRgmmdJg2KhpAK8SR3DjMwAdkxj3ZuxV27CprR9LgpeyGmXUbC6wb7ERfvrnKZjXoUmmDznezpbZb7ap6r1D3tgFxHmwMkQTPH
+** ext prv: xprv9vHkqa6EV4sPZHYqZznhT2NPtPCjKuDKGY38FBWLvgaDx45zo9WQRUT3dKYnjwih2yJD9mkrocEZXo1ex8G81dwSM1fwqWpWkeS3v86pgKt
+* Chain m/0/2147483647<sub>H</sub>
+** ext pub: xpub6ASAVgeehLbnwdqV6UKMHVzgqAG8Gr6riv3Fxxpj8ksbH9ebxaEyBLZ85ySDhKiLDBrQSARLq1uNRts8RuJiHjaDMBU4Zn9h8LZNnBC5y4a
+** ext prv: xprv9wSp6B7kry3Vj9m1zSnLvN3xH8RdsPP1Mh7fAaR7aRLcQMKTR2vidYEeEg2mUCTAwCd6vnxVrcjfy2kRgVsFawNzmjuHc2YmYRmagcEPdU9
+* Chain m/0/2147483647<sub>H</sub>/1
+** ext pub: xpub6DF8uhdarytz3FWdA8TvFSvvAh8dP3283MY7p2V4SeE2wyWmG5mg5EwVvmdMVCQcoNJxGoWaU9DCWh89LojfZ537wTfunKau47EL2dhHKon
+** ext prv: xprv9zFnWC6h2cLgpmSA46vutJzBcfJ8yaJGg8cX1e5StJh45BBciYTRXSd25UEPVuesF9yog62tGAQtHjXajPPdbRCHuWS6T8XA2ECKADdw4Ef
+* Chain m/0/2147483647<sub>H</sub>/1/2147483646<sub>H</sub>
+** ext pub: xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL
+** ext prv: xprvA1RpRA33e1JQ7ifknakTFpgNXPmW2YvmhqLQYMmrj4xJXXWYpDPS3xz7iAxn8L39njGVyuoseXzU6rcxFLJ8HFsTjSyQbLYnMpCqE2VbFWc
+* Chain m/0/2147483647<sub>H</sub>/1/2147483646<sub>H</sub>/2
+** ext pub: xpub6FnCn6nSzZAw5Tw7cgR9bi15UV96gLZhjDstkXXxvCLsUXBGXPdSnLFbdpq8p9HmGsApME5hQTZ3emM2rnY5agb9rXpVGyy3bdW6EEgAtqt
+** ext prv: xprvA2nrNbFZABcdryreWet9Ea4LvTJcGsqrMzxHx98MMrotbir7yrKCEXw7nadnHM8Dq38EGfSh6dqA9QWTyefMLEcBYJUuekgW4BYPJcr9E7j
+
+===테스트 벡터 3===
+
+These vectors test for the retention of leading zeros. See [https://github.com/bitpay/bitcore-lib/issues/47 bitpay/bitcore-lib#47] and [https://github.com/iancoleman/bip39/issues/58 iancoleman/bip39#58] for more information.
+
+Seed (hex): 4b381541583be4423346c643850da4b320e46a87ae3d2a4e6da11eba819cd4acba45d239319ac14f863b8d5ab5a0d0c64d2e8a1e7d1457df2e5a3c51c73235be
+* Chain m
+** ext pub: xpub661MyMwAqRbcEZVB4dScxMAdx6d4nFc9nvyvH3v4gJL378CSRZiYmhRoP7mBy6gSPSCYk6SzXPTf3ND1cZAceL7SfJ1Z3GC8vBgp2epUt13
+** ext prv: xprv9s21ZrQH143K25QhxbucbDDuQ4naNntJRi4KUfWT7xo4EKsHt2QJDu7KXp1A3u7Bi1j8ph3EGsZ9Xvz9dGuVrtHHs7pXeTzjuxBrCmmhgC6
+* Chain m/0<sub>H</sub>
+** ext pub: xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y
+** ext prv: xprv9uPDJpEQgRQfDcW7BkF7eTya6RPxXeJCqCJGHuCJ4GiRVLzkTXBAJMu2qaMWPrS7AANYqdq6vcBcBUdJCVVFceUvJFjaPdGZ2y9WACViL4L
+
+===테스트 벡터 4===
+
+These vectors test for the retention of leading zeros. See [https://github.com/btcsuite/btcutil/issues/172 btcsuite/btcutil#172] for more information.
+
+Seed (hex): 3ddd5602285899a946114506157c7997e5444528f3003f6134712147db19b678
+* Chain m
+** ext pub: xpub661MyMwAqRbcGczjuMoRm6dXaLDEhW1u34gKenbeYqAix21mdUKJyuyu5F1rzYGVxyL6tmgBUAEPrEz92mBXjByMRiJdba9wpnN37RLLAXa
+** ext prv: xprv9s21ZrQH143K48vGoLGRPxgo2JNkJ3J3fqkirQC2zVdk5Dgd5w14S7fRDyHH4dWNHUgkvsvNDCkvAwcSHNAQwhwgNMgZhLtQC63zxwhQmRv
+* Chain m/0<sub>H</sub>
+** ext pub: xpub69AUMk3qDBi3uW1sXgjCmVjJ2G6WQoYSnNHyzkmdCHEhSZ4tBok37xfFEqHd2AddP56Tqp4o56AePAgCjYdvpW2PU2jbUPFKsav5ut6Ch1m
+** ext prv: xprv9vB7xEWwNp9kh1wQRfCCQMnZUEG21LpbR9NPCNN1dwhiZkjjeGRnaALmPXCX7SgjFTiCTT6bXes17boXtjq3xLpcDjzEuGLQBM5ohqkao9G
+* Chain m/0<sub>H</sub>/1<sub>H</sub>
+** ext pub: xpub6BJA1jSqiukeaesWfxe6sNK9CCGaujFFSJLomWHprUL9DePQ4JDkM5d88n49sMGJxrhpjazuXYWdMf17C9T5XnxkopaeS7jGk1GyyVziaMt
+** ext prv: xprv9xJocDuwtYCMNAo3Zw76WENQeAS6WGXQ55RCy7tDJ8oALr4FWkuVoHJeHVAcAqiZLE7Je3vZJHxspZdFHfnBEjHqU5hG1Jaj32dVoS6XLT1
+
+===테스트 벡터 5===
+
+These vectors test that invalid extended keys are recognized as invalid.
+
+* xpub661MyMwAqRbcEYS8w7XLSVeEsBXy79zSzH1J8vCdxAZningWLdN3zgtU6LBpB85b3D2yc8sfvZU521AAwdZafEz7mnzBBsz4wKY5fTtTQBm (pubkey version / prvkey mismatch)
+* xprv9s21ZrQH143K24Mfq5zL5MhWK9hUhhGbd45hLXo2Pq2oqzMMo63oStZzFGTQQD3dC4H2D5GBj7vWvSQaaBv5cxi9gafk7NF3pnBju6dwKvH (prvkey version / pubkey mismatch)
+* xpub661MyMwAqRbcEYS8w7XLSVeEsBXy79zSzH1J8vCdxAZningWLdN3zgtU6Txnt3siSujt9RCVYsx4qHZGc62TG4McvMGcAUjeuwZdduYEvFn (invalid pubkey prefix 04)
+* xprv9s21ZrQH143K24Mfq5zL5MhWK9hUhhGbd45hLXo2Pq2oqzMMo63oStZzFGpWnsj83BHtEy5Zt8CcDr1UiRXuWCmTQLxEK9vbz5gPstX92JQ (invalid prvkey prefix 04)
+* xpub661MyMwAqRbcEYS8w7XLSVeEsBXy79zSzH1J8vCdxAZningWLdN3zgtU6N8ZMMXctdiCjxTNq964yKkwrkBJJwpzZS4HS2fxvyYUA4q2Xe4 (invalid pubkey prefix 01)
+* xprv9s21ZrQH143K24Mfq5zL5MhWK9hUhhGbd45hLXo2Pq2oqzMMo63oStZzFAzHGBP2UuGCqWLTAPLcMtD9y5gkZ6Eq3Rjuahrv17fEQ3Qen6J (invalid prvkey prefix 01)
+* xprv9s2SPatNQ9Vc6GTbVMFPFo7jsaZySyzk7L8n2uqKXJen3KUmvQNTuLh3fhZMBoG3G4ZW1N2kZuHEPY53qmbZzCHshoQnNf4GvELZfqTUrcv (zero depth with non-zero parent fingerprint)
+* xpub661no6RGEX3uJkY4bNnPcw4URcQTrSibUZ4NqJEw5eBkv7ovTwgiT91XX27VbEXGENhYRCf7hyEbWrR3FewATdCEebj6znwMfQkhRYHRLpJ (zero depth with non-zero parent fingerprint)
+* xprv9s21ZrQH4r4TsiLvyLXqM9P7k1K3EYhA1kkD6xuquB5i39AU8KF42acDyL3qsDbU9NmZn6MsGSUYZEsuoePmjzsB3eFKSUEh3Gu1N3cqVUN (zero depth with non-zero index)
+* xpub661MyMwAuDcm6CRQ5N4qiHKrJ39Xe1R1NyfouMKTTWcguwVcfrZJaNvhpebzGerh7gucBvzEQWRugZDuDXjNDRmXzSZe4c7mnTK97pTvGS8 (zero depth with non-zero index)
+* DMwo58pR1QLEFihHiXPVykYB6fJmsTeHvyTp7hRThAtCX8CvYzgPcn8XnmdfHGMQzT7ayAmfo4z3gY5KfbrZWZ6St24UVf2Qgo6oujFktLHdHY4 (unknown extended key version)
+* DMwo58pR1QLEFihHiXPVykYB6fJmsTeHvyTp7hRThAtCX8CvYzgPcn8XnmdfHPmHJiEDXkTiJTVV9rHEBUem2mwVbbNfvT2MTcAqj3nesx8uBf9 (unknown extended key version)
+* xprv9s21ZrQH143K24Mfq5zL5MhWK9hUhhGbd45hLXo2Pq2oqzMMo63oStZzF93Y5wvzdUayhgkkFoicQZcP3y52uPPxFnfoLZB21Teqt1VvEHx (private key 0 not in 1..n-1)
+* xprv9s21ZrQH143K24Mfq5zL5MhWK9hUhhGbd45hLXo2Pq2oqzMMo63oStZzFAzHGBP2UuGCqWLTAPLcMtD5SDKr24z3aiUvKr9bJpdrcLg1y3G (private key n not in 1..n-1)
+* xpub661MyMwAqRbcEYS8w7XLSVeEsBXy79zSzH1J8vCdxAZningWLdN3zgtU6Q5JXayek4PRsn35jii4veMimro1xefsM58PgBMrvdYre8QyULY (invalid pubkey 020000000000000000000000000000000000000000000000000000000000000007)
+* xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHL (invalid checksum)
+
+==감사의 글==
+
+* 유형 2 결정론적 지갑에 대한 독창적인 아이디어와 이에 대한 많은 토론을 제공한 그레고리 맥스웰(Gregory Maxwell).
+* 알모리(Armory)에서 이 방식을 구현하고 이후 제안을 해준 앨랜 레이너(Alan Reiner).
+* 이 BIP를 검토하고 수정해준 에릭 롬브로조(Eric Lombrozo).
+* 사람이 인식할 수 있는 Base58 문자열을 얻기 위한 버전 바이트를 제공한 마이크 칼드웰(Mike Caldwell).
